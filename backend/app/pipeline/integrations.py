@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import importlib.util
 import json
 import re
@@ -22,6 +23,27 @@ def _require_module(module_name: str, *, dependency: str) -> None:
             f"{dependency} Python package is unavailable; install the optional backend dependency before running this stage",
             dependency=dependency,
         )
+
+
+def _release_model_memory() -> None:
+    """Return accelerator memory to the driver after a model step finishes.
+
+    Dropping the last Python reference only returns memory to PyTorch's
+    caching allocator; the CUDA driver still sees it as in use and the next
+    pipeline stage (e.g. WhisperX after Kokoro) OOMs on a small GPU.
+    Cleanup is best-effort and must never mask the real stage result.
+    """
+
+    gc.collect()
+    try:
+        import torch  # type: ignore[import-not-found]
+    except ImportError:
+        return
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:  # pragma: no cover - defensive cleanup path
+        pass
 
 
 @dataclass(frozen=True)
@@ -69,6 +91,7 @@ class KokoroTTSAdapter:
                 dependency="kokoro",
             ) from exc
 
+        pipeline: Any = None
         try:
             pipeline = KPipeline(lang_code=language)
             chunks: list[Any] = []
@@ -86,6 +109,9 @@ class KokoroTTSAdapter:
                 if array.ndim > 1:
                     array = array.reshape(-1)
                 chunks.append(array)
+                # The yielded object keeps the chunk's CUDA tensors alive;
+                # drop it before the next chunk instead of at function exit.
+                del generated
             if not chunks:
                 raise PipelineError("Kokoro returned no audio frames")
             audio_array = np.concatenate(chunks)
@@ -104,6 +130,11 @@ class KokoroTTSAdapter:
             raise
         except Exception as exc:
             raise PipelineError(f"Kokoro synthesis failed: {exc}") from exc
+        finally:
+            # The KPipeline holds the Kokoro torch model (CUDA when
+            # available); drop it so the alignment stage can allocate VRAM.
+            del pipeline
+            _release_model_memory()
 
 
 class WhisperXAlignmentAdapter:
@@ -143,40 +174,54 @@ class WhisperXAlignmentAdapter:
         try:
             if not audio_path.exists() or not audio_path.is_file():
                 raise PipelineError(f"alignment audio does not exist: {audio_path}")
-            model = whisperx.load_model(
-                self.model_name,
-                device=self.device,
-                compute_type=self.compute_type,
-                language=self.language,
-            )
             audio = whisperx.load_audio(str(audio_path))
-            transcription = model.transcribe(audio, language=self.language) if self.language else model.transcribe(audio)
-            language = self.language or transcription.get("language")
-            if not language:
-                raise PipelineError("WhisperX did not return a language code")
-            align_model, metadata = whisperx.load_align_model(
-                language_code=language,
-                device=self.device,
-            )
             audio_duration = len(audio) / 16_000
             if audio_duration <= 0:
                 raise PipelineError("WhisperX loaded an empty audio file")
-            # Keep the known normalized script as the alignment transcript. The
-            # ASR output is only used to discover the language and segment span.
-            forced_segments = [
-                {
-                    "start": 0.0,
-                    "end": audio_duration,
-                    "text": script,
-                }
-            ]
-            aligned = whisperx.align(
-                forced_segments,
-                align_model,
-                metadata,
-                audio,
-                device=self.device,
-            )
+            # The ASR model and the wav2vec2 alignment model never need to be
+            # resident at the same time; free each before loading the next so
+            # peak VRAM stays at one model on small GPUs.
+            model: Any = None
+            try:
+                model = whisperx.load_model(
+                    self.model_name,
+                    device=self.device,
+                    compute_type=self.compute_type,
+                    language=self.language,
+                )
+                transcription = model.transcribe(audio, language=self.language) if self.language else model.transcribe(audio)
+            finally:
+                del model
+                _release_model_memory()
+            language = self.language or transcription.get("language")
+            if not language:
+                raise PipelineError("WhisperX did not return a language code")
+            align_model: Any = None
+            try:
+                align_model, metadata = whisperx.load_align_model(
+                    language_code=language,
+                    device=self.device,
+                )
+                # Keep the known normalized script as the alignment transcript.
+                # The ASR output is only used to discover the language and
+                # segment span.
+                forced_segments = [
+                    {
+                        "start": 0.0,
+                        "end": audio_duration,
+                        "text": script,
+                    }
+                ]
+                aligned = whisperx.align(
+                    forced_segments,
+                    align_model,
+                    metadata,
+                    audio,
+                    device=self.device,
+                )
+            finally:
+                del align_model
+                _release_model_memory()
             raw_words = aligned.get("word_segments") or []
             words = []
             for index, raw in enumerate(raw_words):

@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Timeline",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "canvas", "tracks"],
+  "properties": {
+    "version": {"type": "integer", "const": 1},
+    "canvas": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["w", "h", "fps"],
+      "properties": {
+        "w": {"type": "integer", "const": 1080},
+        "h": {"type": "integer", "const": 1920},
+        "fps": {"type": "integer", "const": 30}
+      }
+    },
+    "tracks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gameplay", "voice", "subtitles", "overlays", "effects", "music"],
+      "properties": {
+        "gameplay": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["clip", "start_offset_s", "crop"],
+          "properties": {
+            "clip": {"type": "string", "minLength": 1},
+            "start_offset_s": {"type": "number", "minimum": 0},
+            "crop": {"type": "string", "const": "center-9x16"}
+          }
+        },
+        "voice": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["file", "gain_db"],
+          "properties": {
+            "file": {"type": "string", "minLength": 1},
+            "gain_db": {"type": "number"}
+          }
+        },
+        "subtitles": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ass"],
+          "properties": {
+            "ass": {"type": "string", "minLength": 1}
+          }
+        },
+        "overlays": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["asset", "t", "duration_s", "zone", "animation", "scale"],
+            "properties": {
+              "asset": {"type": "string", "minLength": 1},
+              "t": {"type": "number", "minimum": 0},
+              "duration_s": {"type": "number", "exclusiveMinimum": 0},
+              "zone": {"type": "string", "enum": ["top-left", "top-right", "middle"]},
+              "animation": {"type": "string", "enum": ["pop-in", "bounce", "slide-up"]},
+              "scale": {"type": "number", "exclusiveMinimum": 0, "maximum": 1}
+            }
+          }
+        },
+        "effects": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["type", "t"],
+            "properties": {
+              "type": {"type": "string", "enum": ["zoom-punch", "shake", "flash", "fade"]},
+              "t": {"type": "number", "minimum": 0}
+            }
+          }
+        },
+        "music": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["file", "gain_db", "duck"],
+          "properties": {
+            "file": {"type": "string", "minLength": 1},
+            "gain_db": {"type": "number"},
+            "duck": {"type": "boolean"}
+          }
+        }
+      }
+    }
+  }
+}

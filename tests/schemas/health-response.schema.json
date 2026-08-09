@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HealthResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "service", "version", "integrations", "data_directory", "data_directory_writable", "job_count"],
+  "properties": {
+    "status": {"type": "string", "enum": ["ok", "degraded"]},
+    "service": {"type": "string", "const": "slopshots-backend"},
+    "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "data_directory": {"type": "string", "minLength": 1},
+    "data_directory_writable": {"type": "boolean"},
+    "job_count": {"type": "integer", "minimum": 0},
+    "integrations": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/integration"},
+      "required": ["ffmpeg", "ffprobe", "kokoro", "whisperx"],
+      "properties": {
+        "ffmpeg": {"$ref": "#/$defs/integration"},
+        "ffprobe": {"$ref": "#/$defs/integration"},
+        "kokoro": {"$ref": "#/$defs/integration"},
+        "whisperx": {"$ref": "#/$defs/integration"},
+        "openai_placement": {"$ref": "#/$defs/integration"}
+      }
+    }
+  },
+  "$defs": {
+    "integration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["available", "dependency", "required"],
+      "properties": {
+        "available": {"type": "boolean"},
+        "dependency": {"type": "string", "minLength": 1},
+        "required": {"type": "boolean"},
+        "executable": {"type": ["string", "null"]},
+        "detail": {"type": ["string", "null"]}
+      }
+    }
+  }
+}

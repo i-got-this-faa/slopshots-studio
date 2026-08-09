@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PlacementProposal",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["placements"],
+  "properties": {
+    "placements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["asset_id", "anchor_text", "zone", "duration_s", "animation", "reason"],
+        "properties": {
+          "asset_id": {"type": "string", "minLength": 1},
+          "anchor_text": {"type": "string", "minLength": 1},
+          "zone": {"type": "string", "enum": ["top-left", "top-right", "middle"]},
+          "duration_s": {"type": "number", "exclusiveMinimum": 0},
+          "animation": {"type": "string", "enum": ["pop-in", "bounce", "slide-up"]},
+          "reason": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}

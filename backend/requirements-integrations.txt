@@ -1,0 +1,6 @@
+# Optional: these packages are intentionally separate from the base install.
+kokoro>=0.9
+numpy>=1.26
+soundfile>=0.12
+whisperx>=3.3
+

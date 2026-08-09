@@ -1,0 +1,38 @@
+{
+  "base_path": "/api/v1",
+  "dev_origins": [
+    "http://127.0.0.1:5173",
+    "http://localhost:5173"
+  ],
+  "frontend_env": "VITE_API_BASE_URL",
+  "routes": [
+    {"method": "GET", "path": "/health"},
+    {"method": "GET", "path": "/settings"},
+    {"method": "PATCH", "path": "/settings"},
+    {"method": "POST", "path": "/intake/normalize"},
+    {"method": "GET", "path": "/media"},
+    {"method": "GET", "path": "/media/{asset_id:path}"},
+    {"method": "POST", "path": "/media/register"},
+    {"method": "POST", "path": "/media/upload"},
+    {"method": "GET", "path": "/jobs"},
+    {"method": "POST", "path": "/jobs"},
+    {"method": "GET", "path": "/jobs/{job_id}"},
+    {"method": "PATCH", "path": "/jobs/{job_id}"},
+    {"method": "POST", "path": "/jobs/{job_id}/intake"},
+    {"method": "GET", "path": "/jobs/{job_id}/stages"},
+    {"method": "GET", "path": "/jobs/{job_id}/stages/{stage}"},
+    {"method": "POST", "path": "/jobs/{job_id}/stages/{stage}/run"},
+    {"method": "GET", "path": "/jobs/{job_id}/artifacts"},
+    {"method": "GET", "path": "/jobs/{job_id}/artifacts/{artifact_path:path}"},
+    {"method": "POST", "path": "/jobs/{job_id}/approve"},
+    {"method": "POST", "path": "/jobs/{job_id}/reject"},
+    {"method": "POST", "path": "/jobs/{job_id}/revise"}
+  ],
+  "smoke_reads": [
+    {"method": "GET", "path": "/health", "response_schema": "health-response.schema.json"},
+    {"method": "GET", "path": "/settings"},
+    {"method": "GET", "path": "/media"},
+    {"method": "GET", "path": "/jobs?limit=1"}
+  ],
+  "cors_preflight": {"method": "POST", "path": "/jobs"}
+}

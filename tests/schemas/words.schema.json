@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AlignedWords",
+  "type": "array",
+  "minItems": 1,
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["w", "start", "end", "conf"],
+    "properties": {
+      "w": {"type": "string", "minLength": 1},
+      "start": {"type": "number", "minimum": 0},
+      "end": {"type": "number", "minimum": 0},
+      "conf": {"type": "number", "minimum": 0, "maximum": 1}
+    }
+  }
+}

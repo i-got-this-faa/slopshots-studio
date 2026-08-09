@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SlopShots All-in-One — Pipeline Plan</title>
+<meta name="description" content="Spec for a semi-automated short-form video pipeline: local TTS, forced-alignment karaoke subtitles, LLM-placed overlays, generated FFmpeg filtergraphs, automated validation, human approval.">
+<style>
+  :root{
+    --bg:#0b0d10; --panel:#12161c; --panel2:#171c24; --line:#232b36;
+    --text:#e9eef4; --dim:#98a5b3; --faint:#5d6a78;
+    --gold:#ffd75f; --cyan:#6ee7ff; --green:#3ddc84; --amber:#ffb454; --blue:#7aa8ff; --red:#ff6b6b;
+    --mono:ui-monospace,"SF Mono","Cascadia Code","JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:ui-sans-serif,system-ui,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --max:1120px; --rad:10px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.55;-webkit-font-smoothing:antialiased}
+  a{color:var(--cyan);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code,.mono{font-family:var(--mono);font-size:.92em}
+  .wrap{max-width:var(--max);margin:0 auto;padding:0 20px}
+
+  /* top bar */
+  .top{position:sticky;top:0;z-index:50;background:rgba(11,13,16,.86);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+  .top .wrap{display:flex;align-items:center;gap:18px;min-height:54px;flex-wrap:wrap}
+  .mark{font-family:var(--mono);font-weight:700;letter-spacing:.06em;color:var(--text)}
+  .mark b{color:var(--gold)}
+  .nav{display:flex;gap:4px;flex-wrap:wrap;margin-left:auto}
+  .nav a{color:var(--dim);font-family:var(--mono);font-size:12.5px;padding:6px 10px;border-radius:6px}
+  .nav a:hover{color:var(--text);background:var(--panel2);text-decoration:none}
+
+  /* hero */
+  .hero{padding:72px 0 40px;border-bottom:1px solid var(--line);
+    background:radial-gradient(900px 320px at 15% -10%,rgba(255,215,95,.09),transparent 60%),
+               radial-gradient(700px 300px at 90% 0%,rgba(110,231,255,.07),transparent 60%)}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.22em;color:var(--gold);text-transform:uppercase;margin:0 0 14px}
+  h1{font-size:clamp(34px,6vw,58px);line-height:1.02;margin:0 0 16px;letter-spacing:-.02em;font-weight:800}
+  h1 .dim{color:var(--faint)}
+  .lede{max-width:760px;color:var(--dim);font-size:clamp(15px,2vw,18px);margin:0 0 26px}
+  .stats{display:flex;gap:10px;flex-wrap:wrap}
+  .stat{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:7px 14px;font-family:var(--mono);font-size:12.5px;color:var(--dim)}
+  .stat b{color:var(--text);font-weight:600}
+
+  /* sections */
+  section{padding:52px 0 8px}
+  .sec-head{display:flex;align-items:baseline;gap:14px;margin:0 0 8px}
+  .sec-num{font-family:var(--mono);color:var(--gold);font-size:13px}
+  h2{font-size:clamp(22px,3.4vw,30px);margin:0;letter-spacing:-.01em;font-weight:750}
+  .sec-sub{color:var(--dim);margin:6px 0 24px;max-width:720px}
+
+  /* pipeline cards */
+  .flow{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
+  .stage{background:var(--panel);border:1px solid var(--line);border-radius:var(--rad);padding:16px 16px 14px;position:relative;transition:border-color .15s}
+  .stage:hover{border-color:#33405263}
+  .stage .n{font-family:var(--mono);font-size:12px;color:var(--faint)}
+  .stage h3{margin:4px 0 6px;font-size:16px;letter-spacing:.01em}
+  .stage p{margin:0;color:var(--dim);font-size:13.5px}
+  .stage .tag{position:absolute;top:14px;right:14px;font-family:var(--mono);font-size:11px;color:var(--faint)}
+
+  /* table */
+  .tbl-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--rad);background:var(--panel)}
+  table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:760px}
+  thead th{position:sticky;top:54px;background:var(--panel2);text-align:left;font-family:var(--mono);font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);padding:10px 14px;border-bottom:1px solid var(--line)}
+  tbody td{padding:9px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr:hover{background:#151a22}
+  td.area{color:var(--text);white-space:nowrap}
+  td.dec{color:var(--dim)}
+  td.ref{font-family:var(--mono);font-size:12px;color:var(--faint);white-space:nowrap}
+  td.num{font-family:var(--mono);color:var(--faint);font-size:12px}
+
+  /* chips */
+  .chip{display:inline-block;font-family:var(--mono);font-size:11px;letter-spacing:.04em;padding:3px 9px;border-radius:999px;white-space:nowrap;border:1px solid transparent}
+  .c-decided{color:var(--green);background:rgba(61,220,132,.10);border-color:rgba(61,220,132,.25)}
+  .c-pending{color:var(--amber);background:rgba(255,180,84,.10);border-color:rgba(255,180,84,.28)}
+  .c-rec{color:var(--blue);background:rgba(122,168,255,.10);border-color:rgba(122,168,255,.28)}
+  .c-risk{color:var(--red);background:rgba(255,107,107,.10);border-color:rgba(255,107,107,.28)}
+
+  /* invariants */
+  .rules{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
+  .rule{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--gold);border-radius:8px;padding:14px 16px}
+  .rule h3{margin:0 0 4px;font-size:14px;font-family:var(--mono);letter-spacing:.03em}
+  .rule p{margin:0;color:var(--dim);font-size:13.5px}
+
+  /* risks */
+  .risk{display:grid;grid-template-columns:44px 1fr;gap:14px;padding:16px 0;border-bottom:1px solid var(--line)}
+  .risk:last-child{border-bottom:none}
+  .risk .rn{font-family:var(--mono);font-size:22px;color:var(--red);opacity:.75}
+  .risk h3{margin:2px 0 4px;font-size:15.5px}
+  .risk p{margin:0 0 6px;color:var(--dim);font-size:13.5px}
+  .risk .mit{font-size:13px;color:var(--green)}
+  .risk .mit::before{content:"→ ";color:var(--faint)}
+
+  /* benchmark callout */
+  .bench{border:1px solid rgba(255,215,95,.30);background:linear-gradient(180deg,rgba(255,215,95,.06),rgba(255,215,95,.02));border-radius:var(--rad);padding:22px}
+  .bench h3{margin:0 0 4px;font-size:17px}
+  .bench .why{color:var(--dim);font-size:13.5px;margin:0 0 16px;max-width:680px}
+  .bench table{min-width:560px;background:transparent}
+  .bench .tbl-wrap{background:var(--bg);margin-bottom:14px}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media(max-width:760px){.cols{grid-template-columns:1fr}}
+  .cols h4{margin:0 0 6px;font-size:13px;font-family:var(--mono);letter-spacing:.05em;text-transform:uppercase}
+  .cols ul{margin:0;padding-left:18px;color:var(--dim);font-size:13.5px}
+  .ok h4{color:var(--green)} .bad h4{color:var(--red)}
+
+  /* docs grid */
+  .docs{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px}
+  .doc{border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:11px 14px;font-family:var(--mono);font-size:12.5px;color:var(--dim);display:flex;gap:10px;align-items:baseline}
+  .doc b{color:var(--text);font-weight:500}
+  .doc .dn{color:var(--gold);font-size:11px}
+
+  footer{margin-top:64px;border-top:1px solid var(--line);padding:26px 0 40px;color:var(--faint);font-size:13px}
+  .legend{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+  .note{font-family:var(--mono);font-size:12px;color:var(--faint)}
+  @media(max-width:640px){
+    .hero{padding:48px 0 32px}
+    section{padding:40px 0 4px}
+    thead th{top:106px}
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <span class="mark">SLOP<b>SHOTS</b> <span style="color:var(--faint)">/ all-in-one</span></span>
+    <nav class="nav">
+      <a href="#pipeline">Pipeline</a>
+      <a href="#decisions">Decisions</a>
+      <a href="#invariants">Invariants</a>
+      <a href="#risks">Risks</a>
+      <a href="#benchmark">Benchmark</a>
+      <a href="#docs">Docs</a>
+    </nav>
+  </div>
+</header>
+
+<div class="hero">
+  <div class="wrap">
+    <p class="eyebrow">Pipeline plan · v0 · pre-benchmark</p>
+    <h1>Script in.<br>Vertical video out. <span class="dim">Human approves.</span></h1>
+    <p class="lede">A semi-automated pipeline that turns a text script into a 60–90s narrated gameplay
+    video for Shorts/Reels: local TTS, forced-alignment karaoke subtitles, LLM-placed meme overlays,
+    generated FFmpeg filtergraphs, an automated validation gate, and a human in the loop before anything ships.</p>
+    <div class="stats">
+      <span class="stat"><b>16</b> spec docs</span>
+      <span class="stat"><b>28</b> decisions on record</span>
+      <span class="stat"><b>9</b> stages</span>
+      <span class="stat"><b>1</b> external dependency</span>
+      <span class="stat"><b>0</b> lines of code yet</span>
+    </div>
+  </div>
+</div>
+
+<main class="wrap">
+
+<section id="pipeline">
+  <div class="sec-head"><span class="sec-num">01</span><h2>The pipeline</h2></div>
+  <p class="sec-sub">Every stage reads files and writes files. Any stage can be re-run without redoing the others.
+  The LLM never sees video; the renderer never makes decisions.</p>
+  <div class="flow">
+    <div class="stage"><span class="n">STAGE 1</span><span class="tag">doc 01</span><h3>Intake</h3><p>Normalize text before TTS (<code>$5 → five dollars</code>). Word-count lint: 150–230 words ≈ 60–90s.</p></div>
+    <div class="stage"><span class="n">STAGE 2</span><span class="tag">doc 02</span><h3>Voice</h3><p>Kokoro 82M, local CPU, Apache-2.0. Voice picked by ear test — it is the channel identity.</p></div>
+    <div class="stage"><span class="n">STAGE 3</span><span class="tag">doc 03</span><h3>Align</h3><p>WhisperX forced alignment vs the normalized script → <code>words.json</code> with per-word confidence.</p></div>
+    <div class="stage"><span class="n">STAGE 4</span><span class="tag">doc 05</span><h3>Place</h3><p>LLM proposes meme/PNG overlays with word-anchored timings. Schema-probe + one repair retry. Human approves in chat.</p></div>
+    <div class="stage"><span class="n">STAGE 5</span><span class="tag">doc 07</span><h3>Timeline</h3><p><code>timeline.json</code> — the single source of truth. Layout zones, fixed genre effects pack, karaoke ASS.</p></div>
+    <div class="stage"><span class="n">STAGE 6</span><span class="tag">doc 08</span><h3>Render</h3><p>One generated FFmpeg filtergraph. 1080×1920, libx264 + AAC. Segment + draft modes for fast iteration.</p></div>
+    <div class="stage"><span class="n">STAGE 7</span><span class="tag">doc 11</span><h3>Validate</h3><p>ffprobe format checks + black/freeze/silence detect + −14 LUFS loudness. Auto-reject, max 3 re-renders.</p></div>
+    <div class="stage"><span class="n">STAGE 8</span><span class="tag">doc 12</span><h3>Approve</h3><p>Human eyeballs the draft at 1×. Mechanical errors must already be green — taste is the human's job.</p></div>
+    <div class="stage"><span class="n">STAGE 9</span><span class="tag">doc 13</span><h3>Publish</h3><p>Manual upload in v1. LLM drafts title/description/hashtags; human pastes and edits.</p></div>
+  </div>
+</section>
+
+<section id="decisions">
+  <div class="sec-head"><span class="sec-num">02</span><h2>Decision record</h2></div>
+  <p class="sec-sub">Every architectural fork and its status. <span class="chip c-pending">pending re-confirm</span>
+  marks final-round selections the session transcript cannot evidence — treated as tentative until re-confirmed.</p>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>#</th><th>Area</th><th>Decision</th><th>Status</th><th>Doc</th></tr></thead>
+      <tbody>
+        <tr><td class="num">01</td><td class="area">Compute strategy</td><td class="dec">Benchmark all stages before committing</td><td><span class="chip c-decided">decided</span></td><td class="ref">14</td></tr>
+        <tr><td class="num">02</td><td class="area">Overlay intelligence</td><td class="dec">LLM proposes, human approves</td><td><span class="chip c-decided">decided</span></td><td class="ref">05</td></tr>
+        <tr><td class="num">03</td><td class="area">Composition engine</td><td class="dec">Generated FFmpeg filtergraphs from JSON</td><td><span class="chip c-decided">decided</span></td><td class="ref">08</td></tr>
+        <tr><td class="num">04</td><td class="area">Footage</td><td class="dec">Self-recorded gameplay library</td><td><span class="chip c-decided">decided</span></td><td class="ref">10</td></tr>
+        <tr><td class="num">05</td><td class="area">Duration target</td><td class="dec">60–90 seconds</td><td><span class="chip c-decided">decided</span></td><td class="ref">01</td></tr>
+        <tr><td class="num">06</td><td class="area">Upload v1</td><td class="dec">Manual</td><td><span class="chip c-decided">decided</span></td><td class="ref">13</td></tr>
+        <tr><td class="num">07</td><td class="area">TTS</td><td class="dec">Kokoro 82M · local CPU · Apache-2.0</td><td><span class="chip c-decided">decided</span></td><td class="ref">02</td></tr>
+        <tr><td class="num">08</td><td class="area">Word timestamps</td><td class="dec">WhisperX forced alignment vs normalized script</td><td><span class="chip c-decided">decided</span></td><td class="ref">03</td></tr>
+        <tr><td class="num">09</td><td class="area">LLM</td><td class="dec">OpenCode Zen OpenAI-compatible /v1/chat/completions — DeepSeek V4 Flash Free</td><td><span class="chip c-decided">decided</span></td><td class="ref">05</td></tr>
+        <tr><td class="num">10</td><td class="area">LLM output safety</td><td class="dec">Probe json_schema · fallback validate + repair</td><td><span class="chip c-decided">decided</span></td><td class="ref">05</td></tr>
+        <tr><td class="num">11</td><td class="area">Asset ingest</td><td class="dec">Vision auto-tag on ingest · human confirms</td><td><span class="chip c-decided">decided</span></td><td class="ref">06</td></tr>
+        <tr><td class="num">12</td><td class="area">Effects</td><td class="dec">Fixed genre pack — no general keyframes in v1</td><td><span class="chip c-decided">decided</span></td><td class="ref">07</td></tr>
+        <tr><td class="num">13</td><td class="area">Music</td><td class="dec">Licensed library + sidechain duck</td><td><span class="chip c-decided">decided</span></td><td class="ref">09</td></tr>
+        <tr><td class="num">14</td><td class="area">Reframe</td><td class="dec">Crop-aware recording — 9:16 crop keeps ~32% of 16:9</td><td><span class="chip c-decided">decided</span></td><td class="ref">10</td></tr>
+        <tr><td class="num">15</td><td class="area">Validation</td><td class="dec">Full automated gate + human eyeball</td><td><span class="chip c-decided">decided</span></td><td class="ref">11</td></tr>
+        <tr><td class="num">16</td><td class="area">Orchestration</td><td class="dec">Stage-cached artifacts · resume from last good stage</td><td><span class="chip c-decided">decided</span></td><td class="ref">12</td></tr>
+        <tr><td class="num">17</td><td class="area">Core pattern</td><td class="dec">video-use style: transcript → EDL → FFmpeg → self-eval</td><td><span class="chip c-decided">decided</span></td><td class="ref">12</td></tr>
+        <tr><td class="num">18</td><td class="area">Karaoke style</td><td class="dec">ASS \kf smooth sweep · \k instant swap is the one-line fallback</td><td><span class="chip c-pending">pending re-confirm</span></td><td class="ref">04</td></tr>
+        <tr><td class="num">19</td><td class="area">Timing QA</td><td class="dec">WhisperX confidence gate · flagged segments spot-checked</td><td><span class="chip c-pending">pending re-confirm</span></td><td class="ref">03</td></tr>
+        <tr><td class="num">20</td><td class="area">Tag taxonomy</td><td class="dec">Fixed enum + 50–100 hand-tagged seed assets</td><td><span class="chip c-pending">pending re-confirm</span></td><td class="ref">06</td></tr>
+        <tr><td class="num">21</td><td class="area">Placement anchors</td><td class="dec">Word/phrase anchors resolved via words.json — survives re-TTS</td><td><span class="chip c-pending">pending re-confirm</span></td><td class="ref">05</td></tr>
+        <tr><td class="num">22</td><td class="area">Collisions</td><td class="dec">Deterministic layout zones · queue or drop with logged warning</td><td><span class="chip c-pending">pending re-confirm</span></td><td class="ref">05 · 07</td></tr>
+        <tr><td class="num">23</td><td class="area">Benchmark gate</td><td class="dec">10s end-to-end prototype · target &lt; 10 min/video</td><td><span class="chip c-pending">pending re-confirm</span></td><td class="ref">14</td></tr>
+        <tr><td class="num">24</td><td class="area">Normalization</td><td class="dec">Normalize before TTS · align against normalized text</td><td><span class="chip c-rec">recommendation</span></td><td class="ref">01</td></tr>
+        <tr><td class="num">25</td><td class="area">Script lint</td><td class="dec">150–230 words ≈ 60–90s at genre pace</td><td><span class="chip c-rec">recommendation</span></td><td class="ref">01</td></tr>
+        <tr><td class="num">26</td><td class="area">Subtitle font</td><td class="dec">Montserrat ExtraBold (OFL) · 6–8px stroke</td><td><span class="chip c-rec">recommendation</span></td><td class="ref">04</td></tr>
+        <tr><td class="num">27</td><td class="area">Audio fades</td><td class="dec">30ms fades at every audio cut — no exceptions</td><td><span class="chip c-rec">recommendation</span></td><td class="ref">09</td></tr>
+        <tr><td class="num">28</td><td class="area">Channel variation</td><td class="dec">Vary voice / game / effect cadence across videos</td><td><span class="chip c-rec">recommendation</span></td><td class="ref">risks</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="invariants">
+  <div class="sec-head"><span class="sec-num">03</span><h2>Invariants</h2></div>
+  <p class="sec-sub">Rules no stage may break. Most are statically checkable before render.</p>
+  <div class="rules">
+    <div class="rule"><h3>timeline.json is truth</h3><p>The FFmpeg generator consumes it and nothing else. Approval edits the file, never the render code.</p></div>
+    <div class="rule"><h3>Transcript == audio by construction</h3><p>Normalize first; TTS and alignment both consume the normalized text. A mismatch means a missing lexicon entry.</p></div>
+    <div class="rule"><h3>Word anchors, not seconds</h3><p>Placements reference phrases, resolved via words.json. Voice regeneration re-resolves everything.</p></div>
+    <div class="rule"><h3>Safe zones are absolute</h3><p>Nothing in the bottom 300px. Subtitle band is reserved. One active overlay per zone.</p></div>
+    <div class="rule"><h3>30ms fades at every cut</h3><p>Clicks at seams are the most audible amateur signal in the genre.</p></div>
+    <div class="rule"><h3>Stages are files in, files out</h3><p>Idempotent, resumable, inspectable. LLM output is frozen at approval — never auto-regenerated.</p></div>
+  </div>
+</section>
+
+<section id="risks">
+  <div class="sec-head"><span class="sec-num">04</span><h2>Residual risks</h2></div>
+  <p class="sec-sub">What the design rounds couldn't close, ordered by blast radius.</p>
+  <div class="risk"><span class="rn">1</span><div><h3>Karaoke timing stack: \kf × WhisperX <span class="chip c-risk">tightest tolerance</span></h3><p>The selected sweep style exposes ±50ms alignment errors, and the confidence gate is the only automated defense.</p><span class="mit">Generator supports \k instant swap from day one — one flag, zero timing-logic changes. Benchmark slice is judged by eye for exactly this.</span></div></div>
+  <div class="risk"><span class="rn">2</span><div><h3>Vision support on the LLM endpoint</h3><p>Asset auto-tagging requires image inputs; many /v1 relays don't accept them. Unproven.</p><span class="mit">Probe on day one alongside json_schema. Fallback: hand-tag the seed pack, defer auto-tagging.</span></div></div>
+  <div class="risk"><span class="rn">3</span><div><h3>Kokoro genre fit</h3><p>Right size, right license — but narration energy is a listening test, not a spec.</p><span class="mit">Three-sample ear test before the first real video; voice choice is isolated from all downstream stages.</span></div></div>
+  <div class="risk"><span class="rn">4</span><div><h3>Single external dependency</h3><p>LLM endpoint down = no placements = pipeline halt. Accepted consciously.</p><span class="mit">Failure halts one video, corrupts nothing; stage-cached state resumes cleanly when it returns.</span></div></div>
+  <div class="risk"><span class="rn">5</span><div><h3>Channel-level platform risk</h3><p>Dozens of structurally identical videos is what inauthentic-content enforcement pattern-matches — regardless of clean footage rights.</p><span class="mit">Vary voice, game, and effect cadence (decision 28). Keep approval real — rubber-stamping kills channels.</span></div></div>
+</section>
+
+<section id="benchmark">
+  <div class="sec-head"><span class="sec-num">05</span><h2>The gate before the build</h2></div>
+  <p class="sec-sub">Every commitment above assumes the target box can run this at acceptable speed. Currently unmeasured.</p>
+  <div class="bench">
+    <h3>10-second end-to-end prototype <span class="chip c-pending">pending re-confirm</span></h3>
+    <p class="why">One real script excerpt through the full chain — normalize → Kokoro → WhisperX → 3 hand-written
+    placements → timeline.json → generated filtergraph (crop + karaoke + overlay pop-in + zoom-punch + ducked music)
+    → validation gate. Every stage timed. Then extrapolate.</p>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Stage</th><th>Wall time</th><th>Scaling note</th></tr></thead>
+        <tbody>
+          <tr><td class="area">TTS — Kokoro, CPU</td><td class="mono">—</td><td class="dec">~linear with script length</td></tr>
+          <tr><td class="area">Alignment — WhisperX int8</td><td class="mono">—</td><td class="dec">model load amortizes per batch</td></tr>
+          <tr><td class="area">ASS generation</td><td class="mono">—</td><td class="dec">expected negligible</td></tr>
+          <tr><td class="area">Render — libx264 preset slow</td><td class="mono">—</td><td class="dec">the number most likely to fail</td></tr>
+          <tr><td class="area">Validation</td><td class="mono">—</td><td class="dec">~1× playback duration</td></tr>
+          <tr><td class="area"><b>Total / video</b></td><td class="mono"><b>—</b></td><td class="dec">gate: &lt; 10 min for 60–90s</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="cols">
+      <div class="ok"><h4>Pass criteria</h4><ul>
+        <li>Total &lt; 10 min for a 60–90s video (extrapolated)</li>
+        <li>Karaoke timing acceptable by eye on the slice</li>
+        <li>Flagged-word ratio &lt; 10%</li>
+      </ul></div>
+      <div class="bad"><h4>If it fails</h4><ul>
+        <li>Render slow → preset medium → draft canvas → hardware question</li>
+        <li>Align slow → smaller whisper model → alignment-only path</li>
+        <li>Voice fails ear test → voice decision reopens; downstream unaffected</li>
+      </ul></div>
+    </div>
+  </div>
+</section>
+
+<section id="docs">
+  <div class="sec-head"><span class="sec-num">06</span><h2>Specification documents</h2></div>
+  <p class="sec-sub">Local files in <code>docs/</code> — the detailed contract for each stage.</p>
+  <div class="docs">
+    <div class="doc"><span class="dn">00</span><b>docs/README.md</b></div>
+    <div class="doc"><span class="dn">—</span><b>docs/decisions.md</b></div>
+    <div class="doc"><span class="dn">01</span><b>docs/01-script-intake.md</b></div>
+    <div class="doc"><span class="dn">02</span><b>docs/02-tts-kokoro.md</b></div>
+    <div class="doc"><span class="dn">03</span><b>docs/03-alignment-whisperx.md</b></div>
+    <div class="doc"><span class="dn">04</span><b>docs/04-subtitles-karaoke.md</b></div>
+    <div class="doc"><span class="dn">05</span><b>docs/05-overlay-placement.md</b></div>
+    <div class="doc"><span class="dn">06</span><b>docs/06-asset-registry.md</b></div>
+    <div class="doc"><span class="dn">07</span><b>docs/07-timeline-edl.md</b></div>
+    <div class="doc"><span class="dn">08</span><b>docs/08-render-ffmpeg.md</b></div>
+    <div class="doc"><span class="dn">09</span><b>docs/09-audio-music.md</b></div>
+    <div class="doc"><span class="dn">10</span><b>docs/10-gameplay-library.md</b></div>
+    <div class="doc"><span class="dn">11</span><b>docs/11-validation.md</b></div>
+    <div class="doc"><span class="dn">12</span><b>docs/12-orchestration-state.md</b></div>
+    <div class="doc"><span class="dn">13</span><b>docs/13-upload.md</b></div>
+    <div class="doc"><span class="dn">14</span><b>docs/14-benchmark-gate.md</b></div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="legend">
+      <span class="chip c-decided">decided</span>
+      <span class="chip c-pending">pending re-confirm</span>
+      <span class="chip c-rec">recommendation</span>
+    </div>
+    <p class="note">SlopShots All-in-One · generated 2026-08-07 · status: pre-benchmark, unpublished (qckpage binary SIGILLs on this host — see session report)</p>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shlex
+import threading
 import uuid
 import wave
 from datetime import datetime, timezone
@@ -75,6 +76,9 @@ class PipelineService:
     def __init__(self, store: JobStore, settings: SettingsManager) -> None:
         self.store = store
         self.settings = settings
+        # Stage runs are serialized process-wide: the box has one small GPU
+        # and concurrent TTS/align/render runs would OOM each other.
+        self._stage_lock = threading.Lock()
 
     def intake(self, text: str, *, job_id: str | None = None) -> NormalizationResult:
         lexicon = self.settings.value.data_dir / "lexicon.yml"
@@ -136,7 +140,8 @@ class PipelineService:
                     self.store.job_dir(job_id) / "placements.raw.json",
                     [proposal.model_dump(mode="json", by_alias=True) for proposal in request.placements],
                 )
-            self._run_with_dependencies(job_id, stage, request, force=request.force, stack=set())
+            with self._stage_lock:
+                self._run_with_dependencies(job_id, stage, request, force=request.force, stack=set())
             refreshed = self.store.get(job_id)
             return refreshed, self._record(refreshed, stage)
 

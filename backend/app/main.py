@@ -12,6 +12,7 @@ from typing import Annotated
 from urllib.parse import quote
 
 from fastapi import APIRouter, FastAPI, File, Form, Query, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -162,7 +163,7 @@ def create_app(app_settings: AppSettings | None = None) -> FastAPI:
         return store.get_media(asset_id)
 
     @router.post("/media/register", response_model=MediaAsset, status_code=201)
-    async def register_media(request: MediaRegisterRequest) -> MediaAsset:
+    def register_media(request: MediaRegisterRequest) -> MediaAsset:
         return store.register_media(request)
 
     @router.post("/media/upload", response_model=MediaAsset, status_code=201)
@@ -200,7 +201,8 @@ def create_app(app_settings: AppSettings | None = None) -> FastAPI:
                     handle.write(chunk)
                 handle.flush()
                 os.fsync(handle.fileno())
-            return store.register_uploaded_media(
+            return await run_in_threadpool(
+                store.register_uploaded_media,
                 temporary,
                 asset_id=asset_id,
                 kind=kind,
@@ -228,16 +230,18 @@ def create_app(app_settings: AppSettings | None = None) -> FastAPI:
         return _present_job(store.get(job_id))
 
     @router.patch("/jobs/{job_id}", response_model=VideoJob)
-    async def update_job(job_id: str, update: VideoJobUpdate) -> VideoJob:
+    def update_job(job_id: str, update: VideoJobUpdate) -> VideoJob:
         return _present_job(store.update(job_id, update))
 
     @router.post("/jobs/{job_id}/intake", response_model=ScriptIntakeResponse)
-    async def intake_job(job_id: str, request: ScriptIntakeRequest) -> ScriptIntakeResponse:
+    def intake_job(job_id: str, request: ScriptIntakeRequest) -> ScriptIntakeResponse:
         job, result = pipeline.intake_job(job_id, request.script)
         return ScriptIntakeResponse(job=_present_job(job), result=result)
 
     @router.post("/jobs/{job_id}/stages/{stage}/run", response_model=StageRunResponse)
-    async def run_stage(job_id: str, stage: StageName, request: StageRunRequest | None = None) -> StageRunResponse:
+    def run_stage(job_id: str, stage: StageName, request: StageRunRequest | None = None) -> StageRunResponse:
+        # Runs in FastAPI's threadpool: stage work (TTS, alignment, render) is
+        # blocking and must not freeze the event loop for minutes.
         job, record = pipeline.run_stage(job_id, stage, request)
         return StageRunResponse(job=_present_job(job), stage=record)
 
@@ -266,7 +270,7 @@ def create_app(app_settings: AppSettings | None = None) -> FastAPI:
         return FileResponse(path, media_type=media_type, filename=path.name)
 
     @router.post("/jobs/{job_id}/approve", response_model=ApprovalResponse)
-    async def approve_job(job_id: str, request: ApprovalRequest | None = None) -> ApprovalResponse:
+    def approve_job(job_id: str, request: ApprovalRequest | None = None) -> ApprovalResponse:
         request = request or ApprovalRequest()
         job, approval = pipeline.approve(
             job_id,
@@ -276,7 +280,7 @@ def create_app(app_settings: AppSettings | None = None) -> FastAPI:
         return ApprovalResponse(job=_present_job(job), approval=approval)
 
     @router.post("/jobs/{job_id}/reject", response_model=ApprovalResponse)
-    async def reject_job(job_id: str, request: ApprovalRequest | None = None) -> ApprovalResponse:
+    def reject_job(job_id: str, request: ApprovalRequest | None = None) -> ApprovalResponse:
         request = request or ApprovalRequest()
         job, approval = pipeline.reject(
             job_id,
@@ -286,7 +290,7 @@ def create_app(app_settings: AppSettings | None = None) -> FastAPI:
         return ApprovalResponse(job=_present_job(job), approval=approval)
 
     @router.post("/jobs/{job_id}/revise", response_model=VideoJob)
-    async def revise_job(job_id: str, request: ApprovalRequest | None = None) -> VideoJob:
+    def revise_job(job_id: str, request: ApprovalRequest | None = None) -> VideoJob:
         request = request or ApprovalRequest()
         return _present_job(pipeline.revise(job_id, comment=request.comment))
 
@@ -301,7 +305,7 @@ def create_app(app_settings: AppSettings | None = None) -> FastAPI:
         return _dashboard_payload(store, manager.value)
 
     @app.post("/jobs/{job_id}/{action}")
-    async def dashboard_action(job_id: str, action: str) -> dict[str, object]:
+    def dashboard_action(job_id: str, action: str) -> dict[str, object]:
         if action == "approve":
             pipeline.approve(job_id, decided_by="operator-dashboard", comment=None)
         elif action == "rerun":

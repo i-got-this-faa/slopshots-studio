@@ -57,6 +57,9 @@
   let selectedJobId = '';
   let activeNav = 'overview';
   let sidebarCollapsed = false;
+  let mobileNavOpen = false;
+  let mobileMenuButton: HTMLButtonElement;
+  let pendingDecision: 'approve' | 'reject' | 'revise' | null = null;
   let dataMode: DataMode = 'checking';
   let connectionError = '';
   let syncLabel = 'Connecting…';
@@ -64,6 +67,8 @@
   let refreshing = false;
   let activePanel: 'editor' | 'artifacts' | 'settings' = 'editor';
   let jobFilter: JobFilter = 'all';
+  const filterOrder: JobFilter[] = ['all', 'review', 'running'];
+  let filterTabs: HTMLButtonElement[] = [];
 
   let scriptText = '';
   let scriptTitle = '';
@@ -132,24 +137,35 @@
   $: videoArtifact = displayedJob?.artifacts.find((artifact) => artifact.type === 'video') ?? null;
   $: wordCount = scriptText.trim() ? scriptText.trim().split(/\s+/).length : 0;
   $: estimatedSeconds = Math.max(0, Math.round(wordCount / 2.5));
-  $: lintTone = intakeResult?.hard_fail
-    ? 'warning'
-    : wordCount < 130 || wordCount > 260
+  $: lintTone = !scriptText.trim()
+    ? 'notice'
+    : intakeResult?.hard_fail
       ? 'warning'
-      : wordCount < 150 || wordCount > 230
-        ? 'notice'
-        : 'good';
-  $: lintLabel = intakeResult?.hard_fail
-    ? 'Backend intake rejected this script'
-    : intakeResult && intakeResult.issues.length
-      ? 'Backend intake returned review notes'
-      : wordCount < 130
-        ? 'Below hard minimum'
-        : wordCount > 260
-          ? 'Over hard maximum'
-          : wordCount < 150 || wordCount > 230
-            ? 'Outside target pace'
-            : 'Within target pace';
+      : wordCount < 130 || wordCount > 260
+        ? 'warning'
+        : wordCount < 150 || wordCount > 230
+          ? 'notice'
+          : 'good';
+  $: lintLabel = !scriptText.trim()
+    ? 'No script yet'
+    : intakeResult?.hard_fail
+      ? 'Backend intake rejected this script'
+      : intakeResult && intakeResult.issues.length
+        ? 'Backend intake returned review notes'
+        : wordCount < 130
+          ? 'Below hard minimum'
+          : wordCount > 260
+            ? 'Over hard maximum'
+            : wordCount < 150 || wordCount > 230
+              ? 'Outside target pace'
+              : 'Within target pace';
+  $: lintDetail = !scriptText.trim()
+    ? 'Write or import a narration script here. Backend intake is authoritative once text exists.'
+    : intakeResult?.issues[0]?.message
+      ? intakeResult.issues[0].message
+      : lintTone === 'good'
+        ? 'Local estimate looks within target; backend is authoritative.'
+        : 'Normalize or adjust before starting the pipeline.';
   $: mutationsEnabled = dataMode === 'live' || dataMode === 'degraded';
   $: connectionLabel =
     dataMode === 'checking'
@@ -192,8 +208,10 @@
 
     void refreshDashboard();
     const pollTimer = window.setInterval(() => void refreshDashboard({ quiet: true }), 5000);
+    window.addEventListener('keydown', handleGlobalKeydown);
     return () => {
       window.clearInterval(pollTimer);
+      window.removeEventListener('keydown', handleGlobalKeydown);
       if (toastTimer) clearTimeout(toastTimer);
     };
   });
@@ -329,6 +347,7 @@
     selectedJobId = id;
     activePanel = 'editor';
     decisionComment = '';
+    pendingDecision = null;
     selectedValidation = null;
     selectedValidationJobId = '';
     const job = jobs.find((item) => item.id === id);
@@ -347,17 +366,111 @@
     }
   }
 
+  function scrollBehavior(): ScrollBehavior {
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+  }
+
   function navigate(id: string) {
     activeNav = id;
-    const target = id === 'settings' ? 'settings-panel' : id === 'scripts' ? 'script-intake' : id === 'jobs' ? 'jobs-panel' : 'overview-top';
-    document.getElementById(target)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    if (window.innerWidth <= 700) sidebarCollapsed = true;
+    const target =
+      id === 'settings'
+        ? 'settings-panel'
+        : id === 'scripts'
+          ? 'script-intake'
+          : id === 'jobs'
+            ? 'jobs-panel'
+            : id === 'artifacts'
+              ? 'artifacts-panel'
+              : 'main-content';
+    document.getElementById(target)?.scrollIntoView({ behavior: scrollBehavior(), block: 'start' });
+    if (mobileNavOpen) closeMobileNav();
   }
 
   function openNewJob() {
     activeNav = 'scripts';
-    document.getElementById('script-intake')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (mobileNavOpen) closeMobileNav();
+    document.getElementById('script-intake')?.scrollIntoView({ behavior: scrollBehavior(), block: 'center' });
     window.setTimeout(() => document.getElementById('script-title')?.focus(), 450);
+  }
+
+  function openMobileNav() {
+    sidebarCollapsed = false;
+    mobileNavOpen = true;
+    window.setTimeout(() => document.querySelector<HTMLButtonElement>('#primary-nav-drawer .nav-item')?.focus(), 0);
+  }
+  function closeMobileNav() {
+    if (!mobileNavOpen) return;
+    mobileNavOpen = false;
+    // Restore focus to the trigger once the drawer is out of the way.
+    window.setTimeout(() => mobileMenuButton?.focus(), 0);
+  }
+
+  function toggleMobileNav() {
+    if (mobileNavOpen) closeMobileNav();
+    else openMobileNav();
+  }
+
+  function toggleSidebar() {
+    if (window.innerWidth <= 700) {
+      toggleMobileNav();
+      return;
+    }
+    sidebarCollapsed = !sidebarCollapsed;
+  }
+
+
+  function handleGlobalKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape' && mobileNavOpen) {
+      event.preventDefault();
+      closeMobileNav();
+    }
+  }
+
+  function requestDecision(action: 'approve' | 'reject' | 'revise') {
+    if (actionBusy) return;
+    if (action === 'approve' && !canApprove) {
+      showToast('Approval requires a passing validation report from the backend.', 'warning');
+      return;
+    }
+    if (selectedJob?.backendStatus !== 'awaiting_approval') {
+      showToast('This job is no longer awaiting approval.', 'warning');
+      return;
+    }
+    pendingDecision = action;
+  }
+
+  function confirmDecision() {
+    if (!pendingDecision) return;
+    if (selectedJob?.backendStatus !== 'awaiting_approval') {
+      pendingDecision = null;
+      showToast('This job is no longer awaiting approval.', 'warning');
+      return;
+    }
+    const action = pendingDecision;
+    pendingDecision = null;
+    void decide(action);
+  }
+
+  function cancelDecision() {
+    pendingDecision = null;
+  }
+
+  function selectFilter(filter: JobFilter) {
+    jobFilter = filter;
+  }
+
+  function onFilterKeydown(event: KeyboardEvent, index: number) {
+    const count = filterOrder.length;
+    let next: number | null = null;
+    if (event.key === 'ArrowRight') next = (index + 1) % count;
+    else if (event.key === 'ArrowLeft') next = (index - 1 + count) % count;
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = count - 1;
+    if (next === null) return;
+    event.preventDefault();
+    const targetFilter = filterOrder[next];
+    jobFilter = targetFilter;
+    filterTabs[next]?.focus();
   }
 
   function importScriptFile() {
@@ -582,6 +695,7 @@
       handleFailure(error, `${action} failed`);
     } finally {
       actionBusy = null;
+      pendingDecision = null;
     }
   }
 
@@ -659,19 +773,24 @@
   <meta name="description" content="SlopShots video pipeline operator dashboard" />
 </svelte:head>
 
-<div class="app-shell">
+<div class:mobile-nav-open={mobileNavOpen} class="app-shell">
+  <a href="#main-content" class="skip-link">Skip to main content</a>
   <Sidebar
     active={activeNav}
     collapsed={sidebarCollapsed}
+    mobileOpen={mobileNavOpen}
     jobCount={jobs.length}
     onNavigate={navigate}
-    onToggle={() => (sidebarCollapsed = !sidebarCollapsed)}
+    onToggle={toggleSidebar}
   />
+  {#if mobileNavOpen}
+    <button type="button" class="mobile-backdrop" aria-label="Close navigation" tabindex="-1" on:click={closeMobileNav}></button>
+  {/if}
 
-  <main class="main-shell" id="overview-top">
+  <main class="main-shell" id="main-content" tabindex="-1" inert={mobileNavOpen}>
     <header class="topbar">
       <div class="topbar-context">
-        <button type="button" class="mobile-menu icon-button" aria-label="Open navigation" on:click={() => (sidebarCollapsed = !sidebarCollapsed)}><Icon name="grid" size={18} /></button>
+        <button type="button" bind:this={mobileMenuButton} class="mobile-menu icon-button" aria-label={mobileNavOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={mobileNavOpen} aria-controls="primary-nav-drawer" on:click={toggleMobileNav}><Icon name="grid" size={18} /></button>
         <span class="crumb-muted">Production</span>
         <Icon name="chevron-right" size={14} />
         <span class="crumb-current">Operator dashboard</span>
@@ -728,20 +847,22 @@
             <StatusPill status={dataMode === 'demo' ? 'offline' : dataMode === 'degraded' ? 'degraded' : dataMode === 'checking' ? 'unknown' : 'complete'} label={dataMode === 'demo' ? 'Sample only' : dataMode === 'checking' ? 'Loading' : dataMode === 'degraded' ? 'Degraded' : dataMode === 'stale' ? 'Snapshot' : 'Live'} />
           </div>
           <div class="job-tabs" role="tablist" aria-label="Job filters">
-            <button type="button" class:tab-selected={jobFilter === 'all'} role="tab" aria-selected={jobFilter === 'all'} on:click={() => (jobFilter = 'all')}>All jobs <span>{jobs.length}</span></button>
-            <button type="button" class:tab-selected={jobFilter === 'review'} role="tab" aria-selected={jobFilter === 'review'} on:click={() => (jobFilter = 'review')}>Needs review <span>{jobs.filter((job) => job.status === 'review').length}</span></button>
-            <button type="button" class:tab-selected={jobFilter === 'running'} role="tab" aria-selected={jobFilter === 'running'} on:click={() => (jobFilter = 'running')}>Running <span>{jobs.filter((job) => job.status === 'rendering').length}</span></button>
+            <button type="button" id="job-filter-all" data-filter="all" bind:this={filterTabs[0]} class:tab-selected={jobFilter === 'all'} role="tab" aria-selected={jobFilter === 'all'} aria-controls="job-filter-panel" tabindex={jobFilter === 'all' ? 0 : -1} on:click={() => selectFilter('all')} on:keydown={(event) => onFilterKeydown(event, 0)}>All jobs <span>{jobs.length}</span></button>
+            <button type="button" id="job-filter-review" data-filter="review" bind:this={filterTabs[1]} class:tab-selected={jobFilter === 'review'} role="tab" aria-selected={jobFilter === 'review'} aria-controls="job-filter-panel" tabindex={jobFilter === 'review' ? 0 : -1} on:click={() => selectFilter('review')} on:keydown={(event) => onFilterKeydown(event, 1)}>Needs review <span>{jobs.filter((job) => job.status === 'review').length}</span></button>
+            <button type="button" id="job-filter-running" data-filter="running" bind:this={filterTabs[2]} class:tab-selected={jobFilter === 'running'} role="tab" aria-selected={jobFilter === 'running'} aria-controls="job-filter-panel" tabindex={jobFilter === 'running' ? 0 : -1} on:click={() => selectFilter('running')} on:keydown={(event) => onFilterKeydown(event, 2)}>Running <span>{jobs.filter((job) => job.status === 'rendering').length}</span></button>
           </div>
-          <div class="job-list">
+          <div class="job-tabpanel" id="job-filter-panel" role="tabpanel" tabindex="0" aria-labelledby={'job-filter-' + jobFilter}>
+            <div class="job-list">
             {#if initialLoading && jobs.length === 0}
               <div class="empty-state"><span class="empty-state-spinner"></span><strong>Connecting to the pipeline…</strong><small>Waiting for /api/v1/jobs.</small></div>
             {:else if visibleJobs.length === 0}
               <div class="empty-state"><span class="empty-state-icon"><Icon name="film" size={18} /></span><strong>{jobs.length ? 'No jobs match this filter.' : 'No jobs returned by the API.'}</strong><small>{jobs.length ? 'Choose another queue filter.' : 'Create a job after the backend connection is ready.'}</small></div>
             {:else}
-              {#each visibleJobs as job}
+              {#each visibleJobs as job (job.id)}
                 <JobRow {job} selected={displayedJob?.id === job.id} onSelect={selectJob} />
               {/each}
             {/if}
+            </div>
           </div>
           <button type="button" class="panel-footer-link" disabled={jobs.length === 0} on:click={() => navigate('jobs')}><span>View queue</span><Icon name="arrow-right" size={15} /></button>
         </article>
@@ -756,7 +877,7 @@
             <input id="script-title" class="text-input title-input" bind:value={scriptTitle} placeholder="Give this short a name" />
             <label class="field-label" for="script-body">Plain-text script <span>· no inline markup</span></label>
             <div class="script-editor-wrap">
-              <div class="line-numbers" aria-hidden="true">{#each scriptText.split('\n') as _, index}<span>{String(index + 1).padStart(2, '0')}</span>{/each}</div>
+              <div class="line-numbers" aria-hidden="true">{#each scriptText.split('\n') as _, index (index)}<span>{String(index + 1).padStart(2, '0')}</span>{/each}</div>
               <textarea id="script-body" bind:value={scriptText} on:input={() => (intakeResult = null)} spellcheck="true" aria-describedby="script-help" placeholder="Paste the narration script here..."></textarea>
             </div>
             <div class="editor-meta">
@@ -764,8 +885,8 @@
               <span id="script-help">Backend lint target 130–260 words</span>
             </div>
             <div class:lint-good={lintTone === 'good'} class:lint-notice={lintTone === 'notice'} class:lint-warning={lintTone === 'warning'} class="lint-row">
-              <span class="lint-icon"><Icon name={lintTone === 'good' ? 'check' : 'alert'} size={14} /></span>
-              <span><strong>{lintLabel}</strong> · {intakeResult?.issues[0]?.message ?? (lintTone === 'good' ? 'Local estimate looks within target; backend is authoritative.' : 'Normalize or adjust before starting the pipeline.')}</span>
+              <span class="lint-icon"><Icon name={!scriptText.trim() ? 'file' : lintTone === 'good' ? 'check' : 'alert'} size={14} /></span>
+              <span><strong>{lintLabel}</strong> · {lintDetail}</span>
               <button type="button" class="text-button" disabled={normalizeBusy || !mutationsEnabled} on:click={() => void normalizeScript()}><Icon name="wand" size={14} /> {normalizeBusy ? 'Normalizing…' : 'Normalize via API'}</button>
             </div>
             <div class="intake-controls">
@@ -773,7 +894,7 @@
               <label class="select-field"><span class="field-label">Speed factor</span><span class="select-wrap"><select bind:value={intakeSpeed} disabled={!settings || !mutationsEnabled}><option value={0.96}>0.96× slower</option><option value={1}>1.00× natural</option><option value={1.02}>1.02× natural</option><option value={1.08}>1.08× faster</option></select><Icon name="chevron-down" size={14} /></span></label>
             </div>
             <div class="intake-controls">
-              <label class="select-field"><span class="field-label">Karaoke mode</span><span class="select-wrap"><select bind:value={intakeKaraokeMode} disabled={!settings || !mutationsEnabled}><option value="kf">kf · progressive fill</option><option value="k">k · word highlight</option></select><Icon name="chevron-down" size={14} /></span></label>
+              <label class="select-field"><span class="field-label">Karaoke mode</span><span class="select-wrap"><select bind:value={intakeKaraokeMode} disabled={!settings || !mutationsEnabled}><option value="kf">kf · progressive fill</option><option value="k">k · word highlight</option></select><Icon name="chevron-down" size={14} /></span><small class="field-note">kf fills captions progressively · k highlights word-by-word</small></label>
               <span class="field-note">Create performs the real <code>POST /api/v1/jobs</code> and intake call.</span>
             </div>
             <div class="media-fields">
@@ -808,10 +929,24 @@
           </div>
           <div class="approval-actions">
             <button type="button" class="button button-ghost" disabled={!mutationsEnabled || refreshing} on:click={() => void refreshSelectedJob()}><Icon name="refresh" size={15} /> Refresh status</button>
-            <button type="button" class="button button-secondary" disabled={!mutationsEnabled || actionBusy !== null || displayedJob.backendStatus !== 'awaiting_approval'} on:click={() => void decide('revise')}><Icon name="x" size={15} /> Request revision</button>
-            <button type="button" class="button button-secondary" disabled={!mutationsEnabled || actionBusy !== null || displayedJob.backendStatus !== 'awaiting_approval'} on:click={() => void decide('reject')}><Icon name="x" size={15} /> Reject</button>
-            <button type="button" class="button button-approve" disabled={!canApprove} on:click={() => void decide('approve')}><Icon name="check" size={16} /> {actionBusy === 'approve' ? 'Approving…' : displayedJob.status === 'approved' ? 'Approved' : 'Approve final'}</button>
+            <button type="button" class="button button-secondary" disabled={!mutationsEnabled || actionBusy !== null || displayedJob.backendStatus !== 'awaiting_approval'} on:click={() => requestDecision('revise')}><Icon name="x" size={15} /> Request revision</button>
+            <button type="button" class="button button-secondary" disabled={!mutationsEnabled || actionBusy !== null || displayedJob.backendStatus !== 'awaiting_approval'} on:click={() => requestDecision('reject')}><Icon name="x" size={15} /> Reject</button>
+            <button type="button" class="button button-approve" disabled={!canApprove} on:click={() => requestDecision('approve')}><Icon name="check" size={16} /> {actionBusy === 'approve' ? 'Approving…' : displayedJob.status === 'approved' ? 'Approved' : 'Approve final'}</button>
           </div>
+          {#if pendingDecision}
+            <div class="decision-confirmation" role="group" aria-labelledby="decision-confirmation-title">
+              <div class="decision-confirmation-copy" aria-live="polite">
+                <strong id="decision-confirmation-title">{pendingDecision === 'approve' ? 'Approve' : pendingDecision === 'reject' ? 'Reject' : 'Request revision'} {displayedJob.title}?</strong>
+                <span>Review note {decisionComment.trim() ? `"${decisionComment.trim()}" will be sent with this action.` : 'is empty — confirm to send without a note.'} Only the confirm button calls the API.</span>
+              </div>
+              <div class="decision-confirmation-actions">
+                <button type="button" class="decision-cancel" on:click={cancelDecision}>Cancel</button>
+                <button type="button" class:decision-danger={pendingDecision !== 'approve'} class:decision-approve={pendingDecision === 'approve'} on:click={confirmDecision}>
+                  {pendingDecision === 'approve' ? 'Confirm approval' : pendingDecision === 'reject' ? 'Confirm rejection' : 'Confirm revision request'}
+                </button>
+              </div>
+            </div>
+          {/if}
         </section>
 
         {#if displayedJob.backendStatus === 'awaiting_approval'}
@@ -849,7 +984,7 @@
               {#if displayedJob.artifacts.length === 0}
                 <div class="empty-state compact-empty"><span class="empty-state-icon"><Icon name="layers" size={18} /></span><strong>No artifacts yet.</strong><small>Run a stage to create outputs.</small></div>
               {:else}
-                {#each displayedJob.artifacts as artifact}
+                {#each displayedJob.artifacts as artifact (artifact.name)}
                   <div class:artifact-unavailable={!artifact.url} class="artifact-row">
                     <span class:artifact-video={artifact.type === 'video'} class:artifact-audio={artifact.type === 'audio'} class:artifact-text={artifact.type === 'text'} class:artifact-data={artifact.type === 'data'} class:artifact-command={artifact.type === 'command'} class="artifact-icon"><Icon name={artifact.type === 'video' ? 'film' : artifact.type === 'audio' ? 'mic' : artifact.type === 'data' ? 'database' : artifact.type === 'command' ? 'terminal' : 'file'} size={15} /></span>
                     {#if artifact.url}
@@ -869,7 +1004,7 @@
           <article class="panel validation-panel">
             <div class="panel-heading"><div><span class="eyebrow">Automated gate</span><h2>Validation checks</h2></div><StatusPill status={validationStatus} label={validationLabel} /></div>
             <div class="validation-list">
-              {#each displayedJob.validation as check}
+              {#each displayedJob.validation as check (check.label)}
                 <div class="validation-row"><span class:validation-pass={check.state === 'pass'} class:validation-warn={check.state === 'warn'} class:validation-fail={check.state === 'fail'} class="validation-mark"><Icon name={check.state === 'pass' ? 'check' : check.state === 'warn' ? 'alert' : 'x'} size={13} /></span><span>{check.label}</span><strong>{check.value}</strong></div>
               {/each}
             </div>
@@ -914,7 +1049,7 @@
               <label class="setting-field"><span>FFprobe executable</span><input class="text-input" bind:value={ffprobeBin} /></label>
               <label class="setting-field"><span>Stage timeout (seconds)</span><input class="text-input" type="number" min="1" step="1" bind:value={stageTimeout} /></label>
               <label class="setting-field"><span>Alignment confidence <output>{Number(alignmentThreshold).toFixed(2)}</output></span><input type="range" min="0" max="1" step="0.01" bind:value={alignmentThreshold} /></label>
-              <label class="setting-field"><span>Karaoke mode</span><select bind:value={karaokeMode}><option value="kf">kf · progressive fill</option><option value="k">k · word highlight</option></select></label>
+              <label class="setting-field"><span>Karaoke mode</span><select bind:value={karaokeMode}><option value="kf">kf · progressive fill</option><option value="k">k · word highlight</option></select><small>kf fills captions progressively · k highlights word-by-word</small></label>
             </fieldset>
           </div>
         {:else}

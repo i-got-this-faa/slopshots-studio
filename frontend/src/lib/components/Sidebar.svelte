@@ -3,6 +3,7 @@
 
   export let active = 'overview';
   export let collapsed = false;
+  export let mobileOpen = false;
   export let jobCount = 0;
   export let onNavigate: (id: string) => void;
   export let onToggle: () => void;
@@ -15,7 +16,7 @@
   ];
 </script>
 
-<aside class:sidebar-collapsed={collapsed} class="sidebar">
+<aside class:sidebar-collapsed={collapsed} class:mobile-open={mobileOpen} class="sidebar" id="primary-nav-drawer" aria-label="Operator navigation">
   <div class="brand-row">
     <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
     {#if !collapsed}<span class="brand-wordmark">slop<span>shots</span></span>{/if}
@@ -28,7 +29,7 @@
 
   <nav class="primary-nav" aria-label="Primary navigation">
     <span class="nav-section-label">Workspace</span>
-    {#each navItems as item}
+    {#each navItems as item (item.id)}
       <button type="button" class:nav-active={active === item.id} class="nav-item" aria-current={active === item.id ? 'page' : undefined} on:click={() => onNavigate(item.id)}>
         <Icon name={item.icon} size={18} />
         {#if !collapsed}<span>{item.label}</span>{/if}
@@ -51,7 +52,6 @@
         <div class="storage-track storage-track-unknown"><span></span></div>
         <small>Usage is not reported by API v1</small>
       </div>
-      <button type="button" class="help-row"><span class="help-icon"><Icon name="help" size={15} /></span><span>Pipeline docs</span><span class="shortcut">⌘ /</span></button>
     {/if}
     <div class="profile-row">
       <span class="profile-avatar">MK</span>

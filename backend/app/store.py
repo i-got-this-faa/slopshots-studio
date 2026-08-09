@@ -72,6 +72,10 @@ class JobStore:
         self.max_upload_bytes = max_upload_bytes
         self._lock = threading.RLock()
         self._job_locks: dict[str, threading.RLock] = {}
+        # Media index is re-read on every lookup; cache it keyed on the
+        # file signature so per-overlay resolution doesn't re-parse the
+        # whole library each time.
+        self._media_index_cache: tuple[tuple[int, int], dict[str, dict[str, object]]] | None = None
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.videos_dir.mkdir(parents=True, exist_ok=True)
         self.media_dir.mkdir(parents=True, exist_ok=True)
@@ -198,9 +202,11 @@ class JobStore:
         for state_path in sorted(self.videos_dir.glob("*/job.json"), key=lambda path: path.stat().st_mtime, reverse=True):
             try:
                 raw = json.loads(state_path.read_text(encoding="utf-8"))
-                jobs.append(self.get(raw["id"]))
-            except (KeyError, OSError, json.JSONDecodeError, NotFoundError, InvalidRequestError):
+                job = VideoJob.model_validate(raw)
+                job.artifacts = self.list_artifacts(job.id)
+            except (OSError, json.JSONDecodeError, ValueError, NotFoundError, InvalidRequestError):
                 continue
+            jobs.append(job)
         return jobs
 
     def read_config(self, job_id: str) -> dict[str, object]:
@@ -430,16 +436,23 @@ class JobStore:
             return asset
 
     def _read_media_index(self) -> dict[str, dict[str, object]]:
-        if not self.media_index_path.exists():
+        try:
+            stat = self.media_index_path.stat()
+        except OSError:
             return {}
+        signature = (stat.st_mtime_ns, stat.st_size)
+        if self._media_index_cache is not None and self._media_index_cache[0] == signature:
+            # Copy so callers registering media cannot mutate cached state.
+            return dict(self._media_index_cache[1])
         try:
             raw = json.loads(self.media_index_path.read_text(encoding="utf-8"))
             entries = raw.get("assets", {}) if isinstance(raw, dict) else None
             if not isinstance(entries, dict):
                 raise ValueError("assets must be an object")
-            return entries
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             raise InvalidRequestError(f"media index is unreadable: {exc}") from exc
+        self._media_index_cache = (signature, entries)
+        return dict(entries)
 
     def _stored_media_path(self, relative_path: object) -> Path:
         if not isinstance(relative_path, str):

@@ -140,10 +140,10 @@ def generate_filtergraph(timeline: Timeline, *, duration_s: float, overlay_count
         )
         graph.append(
             f"[voice][ducked]amix=inputs=2:duration=first:dropout_transition=0,"
-            "loudnorm=I=-14:TP=-1:LRA=11[aout]"
+            "loudnorm=I=-14:TP=-1.5:LRA=11[aout]"
         )
     else:
-        graph.append("[voice]loudnorm=I=-14:TP=-1:LRA=11[aout]")
+        graph.append("[voice]loudnorm=I=-14:TP=-1.5:LRA=11[aout]")
     return ";".join(graph)
 
 
@@ -309,33 +309,32 @@ class FFprobeValidationAdapter:
             check("duration_limit", duration <= 90.0 + 1e-6, f"measured {duration:.3f}s")
         check("container", "mp4" in str(format_data.get("format_name", "")).split(","), str(format_data.get("format_name")))
 
-        filter_results = [
-            run_safe(
-                [ffmpeg, "-hide_banner", "-i", str(media_path), "-vf", "blackdetect=d=0.5:pix_th=0.10", "-an", "-f", "null", "-"],
-                timeout_s=timeout_s,
-                check=False,
-            ),
-            run_safe(
-                [ffmpeg, "-hide_banner", "-i", str(media_path), "-vf", "freezedetect=n=0.001:d=2", "-an", "-f", "null", "-"],
-                timeout_s=timeout_s,
-                check=False,
-            ),
-            run_safe(
-                [ffmpeg, "-hide_banner", "-i", str(media_path), "-af", "silencedetect=n=-45dB:d=1.5", "-vn", "-f", "null", "-"],
-                timeout_s=timeout_s,
-                check=False,
-            ),
-            run_safe(
-                [ffmpeg, "-hide_banner", "-i", str(media_path), "-af", "loudnorm=print_format=json", "-vn", "-f", "null", "-"],
-                timeout_s=timeout_s,
-                check=False,
-            ),
-        ]
-        black_result, freeze_result, silence_result, loudnorm_result = filter_results
-        check("blackdetect", not _has_duration(black_result.stderr, "black_duration", 0.5), "no black run >=0.5s")
-        check("freezedetect", not _has_duration(freeze_result.stderr, "freeze_duration", 2.0), "no freeze >=2s")
-        check("silencedetect", not _has_duration(silence_result.stderr, "silence_duration", 1.5), "no silence >=1.5s")
-        lufs, true_peak = _parse_loudnorm(loudnorm_result.stderr)
+        # Run every content check in a single decode pass instead of one
+        # ffmpeg invocation per filter (each pass fully decodes the file).
+        legs: list[str] = []
+        outputs: list[str] = []
+        if video is not None:
+            legs.append("[0:v]split=2[v_black][v_freeze]")
+            legs.append("[v_black]blackdetect=d=0.5:pix_th=0.10[v_out_black]")
+            legs.append("[v_freeze]freezedetect=n=0.001:d=2[v_out_freeze]")
+            outputs.extend(("[v_out_black]", "[v_out_freeze]"))
+        if audio is not None:
+            legs.append("[0:a]asplit=2[a_silence][a_loud]")
+            legs.append("[a_silence]silencedetect=n=-45dB:d=1.5[a_out_silence]")
+            legs.append("[a_loud]loudnorm=print_format=json[a_out_loud]")
+            outputs.extend(("[a_out_silence]", "[a_out_loud]"))
+        content_result: ProcessResult | None = None
+        if outputs:
+            command = [ffmpeg, "-hide_banner", "-i", str(media_path), "-filter_complex", ";".join(legs)]
+            for label in outputs:
+                command += ["-map", label]
+            command += ["-f", "null", "-"]
+            content_result = run_safe(command, timeout_s=timeout_s, check=False)
+        content_stderr = content_result.stderr if content_result is not None else ""
+        check("blackdetect", not _has_duration(content_stderr, "black_duration", 0.5), "no black run >=0.5s")
+        check("freezedetect", not _has_duration(content_stderr, "freeze_duration", 2.0), "no freeze >=2s")
+        check("silencedetect", not _has_duration(content_stderr, "silence_duration", 1.5), "no silence >=1.5s")
+        lufs, true_peak = _parse_loudnorm(content_stderr)
         if lufs is not None:
             check("loudness", -15.5 <= lufs <= -12.5, f"integrated loudness {lufs:.2f} LUFS")
         if true_peak is not None:
@@ -345,9 +344,8 @@ class FFprobeValidationAdapter:
 
             subtitle_errors = validate_ass_bounds(subtitle_path.read_text(encoding="utf-8"))
             check("subtitle_bounds", not subtitle_errors, "; ".join(subtitle_errors) or "ASS positions are safe")
-        for result in filter_results:
-            if result.returncode != 0:
-                errors.append(f"content check command failed: {result.stderr.strip()[-500:]}")
+        if content_result is not None and content_result.returncode != 0:
+            errors.append(f"content check command failed: {content_result.stderr.strip()[-500:]}")
         return ValidationResult(
             passed=not errors,
             checks=checks,

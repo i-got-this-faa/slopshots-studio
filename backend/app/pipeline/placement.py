@@ -31,12 +31,13 @@ def _anchor_token(value: str) -> str:
     return re.sub(r"[^\w'-]", "", value, flags=re.UNICODE)
 
 
-def _find_anchor(words: list[WordTiming], anchor_text: str) -> list[int]:
+def _find_anchor(actual: list[str], anchor_text: str) -> list[int]:
+    """Return start indices where the anchor matches pre-tokenized words."""
+
     expected = [_anchor_token(token) for token in anchor_text.split()]
     expected = [token for token in expected if token]
     if not expected:
         return []
-    actual = [_anchor_token(word.word) for word in words]
     matches: list[int] = []
     for start in range(0, len(actual) - len(expected) + 1):
         if actual[start : start + len(expected)] == expected:
@@ -71,8 +72,9 @@ def resolve_placements(
     candidates: list[_Candidate] = []
     warnings: list[str] = []
     dropped: list[PlacementProposal] = []
+    actual_tokens = [_anchor_token(word.word) for word in words]
     for original_index, proposal in enumerate(proposals):
-        matches = _find_anchor(words, proposal.anchor_text)
+        matches = _find_anchor(actual_tokens, proposal.anchor_text)
         if not matches:
             raise InvalidRequestError(
                 f"anchor '{proposal.anchor_text}' was not found in aligned words"

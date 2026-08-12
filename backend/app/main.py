@@ -51,6 +51,8 @@ from .models import (
     JobStatus,
     VideoJob,
     VideoJobCreate,
+    VoicePreset,
+    VOICE_PRESETS,
     VideoJobUpdate,
 )
 from .pipeline.ffmpeg import FFmpegAdapter
@@ -149,6 +151,10 @@ def create_app(app_settings: AppSettings | None = None) -> FastAPI:
     @router.patch("/settings", response_model=AppSettings)
     async def update_runtime_settings(update: SettingsUpdate) -> AppSettings:
         return manager.update(update)
+
+    @router.get("/voice-presets", response_model=list[VoicePreset])
+    async def list_voice_presets() -> list[VoicePreset]:
+        return list(VOICE_PRESETS)
 
     @router.post("/intake/normalize", response_model=NormalizationResult)
     async def normalize_script(request: ScriptIntakeRequest) -> NormalizationResult:

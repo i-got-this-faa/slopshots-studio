@@ -13,8 +13,11 @@ import wave
 from pathlib import Path
 from unittest.mock import patch
 
+from fastapi.testclient import TestClient
+
 from app.config import SettingsManager
 from app.errors import InvalidRequestError
+from app.main import create_app
 from app.models import (
     AppSettings,
     GameplayTrack,
@@ -27,6 +30,7 @@ from app.models import (
     Timeline,
     TimelineTracks,
     VoiceTrack,
+    VoicePresetId,
     VideoJobCreate,
     WordTiming,
 )
@@ -135,6 +139,43 @@ class BackendHardeningTest(unittest.TestCase):
                 timeout_s=1,
             )
             self.assertEqual(adapter.suggest(script="hello", words=[], assets=[]), [])
+
+    def test_voice_presets_are_listed_and_resolve_into_jobs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            settings = AppSettings(data_dir=Path(directory) / "data")
+            with TestClient(create_app(settings)) as client:
+                presets_response = client.get("/api/v1/voice-presets")
+                self.assertEqual(presets_response.status_code, 200)
+                presets = presets_response.json()
+                self.assertEqual(len(presets), 7)
+                self.assertEqual(
+                    {preset["id"] for preset in presets},
+                    {preset.value for preset in VoicePresetId},
+                )
+
+                created_response = client.post(
+                    "/api/v1/jobs",
+                    json={
+                        "name": "Preset test",
+                        "script": "hello",
+                        "voice_preset": VoicePresetId.MAD_SCIENTIST.value,
+                    },
+                )
+                self.assertEqual(created_response.status_code, 201)
+                created = created_response.json()
+                self.assertEqual(created["voice_preset"], "mad-scientist")
+                self.assertEqual(created["kokoro_voice"], "am_onyx")
+                self.assertEqual(created["kokoro_speed"], 1.08)
+
+                updated_response = client.patch(
+                    f"/api/v1/jobs/{created['id']}",
+                    json={"voice_preset": VoicePresetId.LOUD_DAD.value},
+                )
+                self.assertEqual(updated_response.status_code, 200)
+                updated = updated_response.json()
+                self.assertEqual(updated["voice_preset"], "loud-dad")
+                self.assertEqual(updated["kokoro_voice"], "am_fenrir")
+                self.assertEqual(updated["kokoro_speed"], 0.94)
 
 
 @unittest.skipUnless(shutil.which("ffmpeg"), "real FFmpeg is not installed")

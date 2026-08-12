@@ -9,6 +9,7 @@
     {"method": "GET", "path": "/health"},
     {"method": "GET", "path": "/settings"},
     {"method": "PATCH", "path": "/settings"},
+    {"method": "GET", "path": "/voice-presets"},
     {"method": "POST", "path": "/intake/normalize"},
     {"method": "GET", "path": "/media"},
     {"method": "GET", "path": "/media/{asset_id:path}"},

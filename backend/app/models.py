@@ -92,6 +92,84 @@ class KaraokeMode(StrEnum):
     KF = "kf"
     K = "k"
 
+class VoicePresetId(StrEnum):
+    MAD_SCIENTIST = "mad-scientist"
+    NERVOUS_SIDEKICK = "nervous-sidekick"
+    SLEAZY_CHARMER = "sleazy-charmer"
+    LOUD_DAD = "loud-dad"
+    SCHEMING_PRODIGY = "scheming-prodigy"
+    WARM_STORYTELLER = "warm-storyteller"
+    SHARP_COMMENTATOR = "sharp-commentator"
+
+
+class VoicePreset(SlopShotsModel):
+    """Natural Kokoro voice and pacing selected as one reusable style."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: VoicePresetId
+    name: str
+    description: str
+    kokoro_voice: str
+    kokoro_speed: float = Field(ge=0.5, le=1.5)
+
+
+VOICE_PRESETS: tuple[VoicePreset, ...] = (
+    VoicePreset(
+        id=VoicePresetId.MAD_SCIENTIST,
+        name="Mad Scientist",
+        description="Fast, intense, lower delivery with chaotic scientist energy.",
+        kokoro_voice="am_onyx",
+        kokoro_speed=1.08,
+    ),
+    VoicePreset(
+        id=VoicePresetId.NERVOUS_SIDEKICK,
+        name="Nervous Sidekick",
+        description="Quick, youthful delivery with restless sidekick energy.",
+        kokoro_voice="am_puck",
+        kokoro_speed=1.14,
+    ),
+    VoicePreset(
+        id=VoicePresetId.SLEAZY_CHARMER,
+        name="Sleazy Charmer",
+        description="Smooth, upbeat delivery for an overconfident neighbor.",
+        kokoro_voice="am_liam",
+        kokoro_speed=1.04,
+    ),
+    VoicePreset(
+        id=VoicePresetId.LOUD_DAD,
+        name="Loud Sitcom Dad",
+        description="Big, blunt delivery with heavyweight sitcom-dad energy.",
+        kokoro_voice="am_fenrir",
+        kokoro_speed=0.94,
+    ),
+    VoicePreset(
+        id=VoicePresetId.SCHEMING_PRODIGY,
+        name="Scheming Prodigy",
+        description="Precise, clipped delivery with smug child-genius energy.",
+        kokoro_voice="am_echo",
+        kokoro_speed=1.10,
+    ),
+    VoicePreset(
+        id=VoicePresetId.WARM_STORYTELLER,
+        name="Warm Storyteller",
+        description="Natural, friendly delivery for relaxed narration.",
+        kokoro_voice="af_heart",
+        kokoro_speed=0.98,
+    ),
+    VoicePreset(
+        id=VoicePresetId.SHARP_COMMENTATOR,
+        name="Sharp Commentator",
+        description="Clear, assertive delivery for punchy commentary.",
+        kokoro_voice="af_bella",
+        kokoro_speed=1.03,
+    ),
+)
+
+
+def get_voice_preset(preset_id: VoicePresetId) -> VoicePreset:
+    return next(preset for preset in VOICE_PRESETS if preset.id == preset_id)
+
 
 class CropMode(StrEnum):
     CENTER_9X16 = "center-9x16"
@@ -175,6 +253,7 @@ class VideoJobCreate(SlopShotsModel):
     script: str = Field(min_length=1)
     gameplay_file: str | None = None
     music_file: str | None = None
+    voice_preset: VoicePresetId | None = None
     kokoro_voice: str | None = None
     kokoro_speed: float | None = Field(default=None, ge=0.5, le=1.5)
     karaoke_mode: KaraokeMode | None = None
@@ -183,6 +262,7 @@ class VideoJobCreate(SlopShotsModel):
 class VideoJobUpdate(SlopShotsModel):
     gameplay_file: str | None = None
     music_file: str | None = None
+    voice_preset: VoicePresetId | None = None
     kokoro_voice: str | None = None
     kokoro_speed: float | None = Field(default=None, ge=0.5, le=1.5)
     karaoke_mode: KaraokeMode | None = None
@@ -516,6 +596,7 @@ class VideoJob(SlopShotsModel):
     directory: str
     gameplay_file: str | None = None
     music_file: str | None = None
+    voice_preset: VoicePresetId | None = None
     kokoro_voice: str
     kokoro_speed: float
     karaoke_mode: KaraokeMode

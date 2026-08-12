@@ -5,10 +5,10 @@
 ## Chain
 
 ```
-voice.wav ──aresample=48000──┐
-                             amix ── loudnorm (final) ── aac 192k
-music ── loudnorm ── sidechaincompress ──┘
-              (keyed by voice)
+voice.wav ──aresample── compressor ── split ──┬────────── amix ── loudnorm ── aac
+                                              └─ sidechain key ─┐
+music ───────────────────────────────────────────────────────── sidechaincompress
+                                                   (ducked music returns to amix)
 ```
 
 ## Ducking
@@ -31,6 +31,11 @@ music ── loudnorm ── sidechaincompress ──┘
 - Final mix target: **−14 LUFS integrated**, true peak ≤ −1 dBTP
   (YouTube norm). Measured — not assumed — at validation
   ([11](11-validation.md)).
+
+Narration is compressed before the final normalization with
+`threshold=0.1:ratio=4:attack=20:release=250:makeup=4`. This controls isolated
+speech peaks so the one-pass final `loudnorm` can reach the validation window
+without clipping or flattening the whole mix.
 
 ## Production rules (borrowed from video-use)
 

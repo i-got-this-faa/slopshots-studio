@@ -28,6 +28,7 @@ from .models import (
     VideoJob,
     VideoJobCreate,
     VideoJobUpdate,
+    get_voice_preset,
     model_to_jsonable,
 )
 
@@ -107,8 +108,16 @@ class JobStore:
             directory = self.videos_dir / f"{slugify(request.name)}-{job_id[:8]}"
             directory.mkdir(parents=True, exist_ok=False)
             now = utc_now()
-            effective_voice = request.kokoro_voice or settings.kokoro_voice
-            effective_speed = request.kokoro_speed or settings.kokoro_speed
+            preset = get_voice_preset(request.voice_preset) if request.voice_preset else None
+            effective_voice = request.kokoro_voice or (
+                preset.kokoro_voice if preset else settings.kokoro_voice
+            )
+            effective_speed = (
+                request.kokoro_speed
+                if request.kokoro_speed is not None
+                else preset.kokoro_speed if preset else settings.kokoro_speed
+            )
+            effective_preset = request.voice_preset if request.kokoro_voice is None else None
             effective_mode = request.karaoke_mode or settings.karaoke_mode
             job = VideoJob(
                 id=job_id,
@@ -119,6 +128,7 @@ class JobStore:
                 directory=str(directory),
                 gameplay_file=request.gameplay_file,
                 music_file=request.music_file,
+                voice_preset=effective_preset,
                 kokoro_voice=effective_voice,
                 kokoro_speed=effective_speed,
                 karaoke_mode=effective_mode,
@@ -130,6 +140,7 @@ class JobStore:
                 {
                     "gameplay_file": request.gameplay_file,
                     "music_file": request.music_file,
+                    "voice_preset": effective_preset.value if effective_preset else None,
                     "kokoro_voice": effective_voice,
                     "kokoro_speed": effective_speed,
                     "karaoke_mode": effective_mode.value,
@@ -162,9 +173,20 @@ class JobStore:
             job = self.get(job_id)
             values = update.model_dump(exclude_unset=True)
             changed = False
+            preset_id = values.pop("voice_preset", None)
+            if preset_id is not None:
+                preset = get_voice_preset(preset_id)
+                job.voice_preset = preset_id
+                if "kokoro_voice" not in values:
+                    job.kokoro_voice = preset.kokoro_voice
+                if "kokoro_speed" not in values:
+                    job.kokoro_speed = preset.kokoro_speed
+                changed = True
             for key, value in values.items():
                 if value is not None:
                     setattr(job, key, value)
+                    if key == "kokoro_voice":
+                        job.voice_preset = None
                     changed = True
             if changed:
                 for record in job.stages:
@@ -188,6 +210,7 @@ class JobStore:
                 self.job_dir(job_id) / "job.config.json",
                 {
                     "gameplay_file": job.gameplay_file,
+                    "voice_preset": job.voice_preset.value if job.voice_preset else None,
                     "music_file": job.music_file,
                     "kokoro_voice": job.kokoro_voice,
                     "kokoro_speed": job.kokoro_speed,

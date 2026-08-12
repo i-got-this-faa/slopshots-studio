@@ -3,6 +3,8 @@ from app.models import (
     Canvas,
     GameplayTrack,
     KaraokeMode,
+    MusicTrack,
+    OverlayTrack,
     PlacementProposal,
     SubtitlesTrack,
     Timeline,
@@ -11,7 +13,7 @@ from app.models import (
     WordTiming,
     Zone,
 )
-from app.pipeline.ass import generate_ass, validate_ass_bounds
+from app.pipeline.ass import build_cards, generate_ass, validate_ass_bounds
 from app.pipeline.ffmpeg import generate_filtergraph
 from app.pipeline.intake import normalize_script, normalize_and_lint
 from app.pipeline.placement import resolve_placements
@@ -83,4 +85,76 @@ def test_ass_and_filtergraph_use_safe_canvas_contract():
     assert "scale=1080:1920" in graph
     assert "subtitles='subtitles.ass'" in graph
     assert "[aout]" in graph
+    assert "acompressor=threshold=0.1:ratio=4" in graph
+
+
+def test_music_filtergraph_splits_voice_for_mix_and_sidechain():
+    timeline = Timeline(
+        canvas=Canvas(),
+        tracks=TimelineTracks(
+            gameplay=GameplayTrack(clip="gameplay.mp4"),
+            voice=VoiceTrack(file="voice.wav"),
+            subtitles=SubtitlesTrack(ass="subtitles.ass"),
+            music=MusicTrack(file="music.mp3"),
+            overlays=[
+                OverlayTrack(
+                    asset="visual.png",
+                    t=1,
+                    duration_s=2,
+                    zone=Zone.MIDDLE,
+                    animation=Animation.POP_IN,
+                    scale=1,
+                )
+            ],
+        ),
+        duration_s=10.3,
+    )
+
+    graph = generate_filtergraph(timeline, duration_s=10.3)
+
+    assert "[voice]asplit=2[voice_mix][voice_key]" in graph
+    assert "[music][voice_key]sidechaincompress=" in graph
+    assert "[voice_mix][ducked]amix=" in graph
+    assert "scale=760:390:force_original_aspect_ratio=decrease" in graph
+    assert "pad=760:390:(ow-iw)/2:(oh-ih)/2:color=black@0" in graph
+
+
+def test_ass_cards_show_four_words_on_two_lines_without_overlap():
+    words = [
+        WordTiming(w=word, start=index * 0.25, end=index * 0.25 + 0.2, conf=1)
+        for index, word in enumerate(
+            ["the", "beat", "lifts", "us", "then", "the", "beat", "drops."]
+        )
+    ]
+
+    cards = build_cards(words)
+    assert [len(card.words) for card in cards] == [4, 4]
+    assert all(card.end <= following.start for card, following in zip(cards, cards[1:]))
+
+    ass = generate_ass(words)
+    card_lines = [line for line in ass.splitlines() if line.startswith("Dialogue: 1")]
+    backdrop_lines = [line for line in ass.splitlines() if line.startswith("Dialogue: 0")]
+    highlight_lines = [line for line in ass.splitlines() if line.startswith("Dialogue: 2")]
+    assert len(highlight_lines) == len(words)
+    assert all(line.count(r"\kf") == 1 for line in highlight_lines)
+    assert all(r"\kf" not in line for line in card_lines)
+    assert len(card_lines) == 2
+    assert len(backdrop_lines) == 2
+    assert all(line.count(r"\N") == 1 for line in card_lines)
+    assert "Style: Backdrop" in ass
+    assert "Montserrat ExtraBold,92" in ass
+
+
+def test_ass_splits_cards_before_a_line_can_clip():
+    words = [
+        WordTiming(w=word, start=index * 0.25, end=index * 0.25 + 0.2, conf=1)
+        for index, word in enumerate(["the", "most", "dangerous", "feature"])
+    ]
+
+    cards = build_cards(words)
+
+    assert [[word.word for word in card.words] for card in cards] == [
+        ["the", "most", "dangerous"],
+        ["feature"],
+    ]
 

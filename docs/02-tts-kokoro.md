@@ -28,6 +28,27 @@ pip install kokoro soundfile   # plus espeak-ng system package
   candidate voices (`af_heart`, `af_bella`, `am_adam`, …) before the first
   real video. The voice *is* the channel identity.
 
+## Voice presets
+
+The API exposes `GET /api/v1/voice-presets`. A job can select one with
+`voice_preset`; job creation resolves the preset to the concrete Kokoro voice
+and speed before TTS and persists both values for reproducible cache keys.
+
+| Preset | Kokoro voice | Speed | Direction |
+|--------|--------------|-------|-----------|
+| `mad-scientist` | `am_onyx` | 1.08 | Fast, intense, lower delivery |
+| `nervous-sidekick` | `am_puck` | 1.14 | Quick, youthful, restless delivery |
+| `sleazy-charmer` | `am_liam` | 1.04 | Smooth, upbeat, overconfident delivery |
+| `loud-dad` | `am_fenrir` | 0.94 | Big, blunt sitcom-dad delivery |
+| `scheming-prodigy` | `am_echo` | 1.10 | Precise, clipped, smug delivery |
+| `warm-storyteller` | `af_heart` | 0.98 | Friendly narration |
+| `sharp-commentator` | `af_bella` | 1.03 | Clear, assertive commentary |
+
+These are original style directions using Kokoro's licensed voice packs, not
+clones or impersonations of actors or copyrighted characters. Kokoro 0.9
+supports voice selection and speed but not per-voice pitch or reference-audio
+cloning.
+
 ## Chunking
 
 Kokoro handles long input via sentence segmentation internally; if manual

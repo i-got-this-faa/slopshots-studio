@@ -72,3 +72,20 @@ rejects before `timeline.json` is finalized. No GUI in v1.
 `script.normalized.txt` (with word indices), the registry's asset catalogue
 (id + enum tags + description per asset), the zone list, and the placement
 schema. Keep the catalogue under ~200 assets or the prompt dominates cost.
+
+## Generated visual packs
+
+Generated stills use the same registry and placement contract as memes:
+
+1. Generate a square source image with safe margins and no unlicensed logos.
+2. Store the final PNG as a confirmed `overlay` asset with its prompt and
+   provenance in the registry description/tags.
+3. Submit `PlacementProposal` entries anchored to narration phrases.
+4. The placement stage resolves phrase timing, queues zone collisions, and
+   writes the reusable plan to `placements.json`.
+5. Rendering preserves each source image's aspect ratio with
+   `force_original_aspect_ratio=decrease` and transparent padding inside the
+   zone rectangle; overlays are never stretched to fill a zone.
+
+This keeps image generation outside the deterministic render stages while
+making generated pictures reusable across rerenders and future jobs.

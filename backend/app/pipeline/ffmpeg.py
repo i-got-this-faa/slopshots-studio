@@ -103,7 +103,11 @@ def generate_filtergraph(timeline: Timeline, *, duration_s: float, overlay_count
         scaled_width = max(1, round(width * overlay.scale))
         scaled_height = max(1, round(height * overlay.scale))
         overlay_label = f"ov{index}"
-        graph.append(f"[{index}:v]format=rgba,scale={scaled_width}:{scaled_height}[{overlay_label}]")
+        graph.append(
+            f"[{index}:v]format=rgba,"
+            f"scale={scaled_width}:{scaled_height}:force_original_aspect_ratio=decrease,"
+            f"pad={scaled_width}:{scaled_height}:(ow-iw)/2:(oh-ih)/2:color=black@0[{overlay_label}]"
+        )
         start = _duration_expression(overlay.t)
         end = _duration_expression(overlay.t + overlay.duration_s)
         x_expr, y_expr = str(x), str(y)
@@ -124,22 +128,24 @@ def generate_filtergraph(timeline: Timeline, *, duration_s: float, overlay_count
     voice_gain = timeline.tracks.voice.gain_db
     voice = (
         f"[1:a]aresample=48000,volume={voice_gain:g}dB,"
+        "acompressor=threshold=0.1:ratio=4:attack=20:release=250:makeup=4,"
         f"atrim=duration={duration},asetpts=PTS-STARTPTS,"
         f"apad=whole_dur={duration}[voice]"
     )
     graph.append(voice)
     if timeline.tracks.music:
+        graph.append("[voice]asplit=2[voice_mix][voice_key]")
         music_gain = timeline.tracks.music.gain_db
         graph.append(
             f"[2:a]aresample=48000,volume={music_gain:g}dB,"
             f"atrim=duration={duration},asetpts=PTS-STARTPTS[music]"
         )
         graph.append(
-            "[music][voice]sidechaincompress=threshold=0.02:ratio=8:"
+            "[music][voice_key]sidechaincompress=threshold=0.02:ratio=8:"
             "attack=20:release=400:makeup=1[ducked]"
         )
         graph.append(
-            f"[voice][ducked]amix=inputs=2:duration=first:dropout_transition=0,"
+            f"[voice_mix][ducked]amix=inputs=2:duration=first:dropout_transition=0,"
             "loudnorm=I=-14:TP=-1.5:LRA=11[aout]"
         )
     else:

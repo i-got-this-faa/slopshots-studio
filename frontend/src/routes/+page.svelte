@@ -4,7 +4,6 @@
   import JobRow from '$lib/components/JobRow.svelte';
   import Pipeline from '$lib/components/Pipeline.svelte';
   import PreviewCard from '$lib/components/PreviewCard.svelte';
-  import Sidebar from '$lib/components/Sidebar.svelte';
   import StatCard from '$lib/components/StatCard.svelte';
   import StatusPill from '$lib/components/StatusPill.svelte';
   import {
@@ -58,7 +57,7 @@
   let activeNav = 'overview';
   let sidebarCollapsed = false;
   let mobileNavOpen = false;
-  let mobileMenuButton: HTMLButtonElement;
+  let mobileMenuButton: HTMLButtonElement | undefined;
   let pendingDecision: 'approve' | 'reject' | 'revise' | null = null;
   let dataMode: DataMode = 'checking';
   let connectionError = '';
@@ -768,307 +767,515 @@
   }
 </script>
 
-<svelte:head>
-  <title>SlopShots · Operator</title>
-  <meta name="description" content="SlopShots video pipeline operator dashboard" />
-</svelte:head>
+<a class="skip-link" href="#main-content">Skip to content</a>
 
-<div class:mobile-nav-open={mobileNavOpen} class="app-shell">
-  <a href="#main-content" class="skip-link">Skip to main content</a>
-  <Sidebar
-    active={activeNav}
-    collapsed={sidebarCollapsed}
-    mobileOpen={mobileNavOpen}
-    jobCount={jobs.length}
-    onNavigate={navigate}
-    onToggle={toggleSidebar}
-  />
-  {#if mobileNavOpen}
-    <button type="button" class="mobile-backdrop" aria-label="Close navigation" tabindex="-1" on:click={closeMobileNav}></button>
+<div class="sheet-wrap">
+  <header class="masthead">
+    <div class="wordmark-block">
+      <span class="wordmark-square" aria-hidden="true">SS</span>
+      <span class="wordmark-copy">
+        <strong>SlopShots</strong>
+        <small>Spotting sheet · script → final.mp4</small>
+      </span>
+    </div>
+
+    <div class="masthead-meta">
+      <span class="meta-cell">SHEET <strong>{new Date().toISOString().slice(0, 10)}</strong></span>
+      <span class="meta-cell">SYNC <strong>{connectionSync}</strong></span>
+      <span class={`stamp ${dataMode === 'live' ? 'stamp-live' : dataMode === 'checking' ? 'stamp-checking' : dataMode === 'degraded' || dataMode === 'demo' ? 'stamp-demo' : 'stamp-off'}`}>{connectionLabel}</span>
+    </div>
+
+    <div class="masthead-actions">
+      <button type="button" class="icon-btn" aria-label="Refresh dashboard" disabled={refreshing} on:click={() => void refreshDashboard()}><Icon name="refresh" size={16} /></button>
+      <button type="button" class="btn btn-solid" on:click={openNewJob}><Icon name="plus" size={14} /> New cue</button>
+    </div>
+  </header>
+
+  {#if dataMode === 'demo'}
+    <div class="notice-row notice-warn" role="status">
+      <span class="notice-mark" aria-hidden="true"></span>
+      <span class="notice-copy"><strong>Sample data.</strong> No backend connected — set <code>VITE_API_BASE_URL</code> or connect from Session setup. Mutations are disabled.</span>
+      <button type="button" class="btn btn-compact btn-amber-outline" on:click={() => navigate('settings')}>Connect backend</button>
+    </div>
+  {:else if dataMode === 'stale'}
+    <div class="notice-row notice-error" role="alert">
+      <span class="notice-mark" aria-hidden="true"></span>
+      <span class="notice-copy"><strong>Disconnected.</strong> Showing the last live snapshot; mutations are disabled until the backend returns.</span>
+      <button type="button" class="btn btn-compact btn-cue-outline" disabled={refreshing} on:click={() => void refreshDashboard()}>Retry</button>
+    </div>
+  {:else if dataMode === 'degraded'}
+    <div class="notice-row notice-warn" role="status">
+      <span class="notice-mark" aria-hidden="true"></span>
+      <span class="notice-copy"><strong>Connected — degraded.</strong> {healthSummary()}</span>
+    </div>
   {/if}
 
-  <main class="main-shell" id="main-content" tabindex="-1" inert={mobileNavOpen}>
-    <header class="topbar">
-      <div class="topbar-context">
-        <button type="button" bind:this={mobileMenuButton} class="mobile-menu icon-button" aria-label={mobileNavOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={mobileNavOpen} aria-controls="primary-nav-drawer" on:click={toggleMobileNav}><Icon name="grid" size={18} /></button>
-        <span class="crumb-muted">Production</span>
-        <Icon name="chevron-right" size={14} />
-        <span class="crumb-current">Operator dashboard</span>
+  {#if connectionError && (dataMode === 'live' || dataMode === 'stale')}
+    <div class="error-line" role="alert">{connectionError}</div>
+  {/if}
+
+  <nav class="sheet-tabs" aria-label="Sheet sections">
+    <button type="button" class="sheet-tab" aria-pressed={activeNav !== 'scripts' && activeNav !== 'settings'} on:click={() => navigate('overview')}>
+      <span class="tab-index" aria-hidden="true">01</span>Queue{#if jobs.length > 0}<span class="tab-count">{jobs.length}</span>{/if}
+    </button>
+    <button type="button" class="sheet-tab" aria-pressed={activeNav === 'scripts'} on:click={() => navigate('scripts')}>
+      <span class="tab-index" aria-hidden="true">02</span>New cue
+    </button>
+    <button type="button" class="sheet-tab" aria-pressed={activeNav === 'settings'} on:click={() => navigate('settings')}>
+      <span class="tab-index" aria-hidden="true">03</span>Session setup
+    </button>
+  </nav>
+
+  <main id="main-content">
+    {#if activeNav !== 'scripts' && activeNav !== 'settings'}
+      <section aria-label="Queue summary">
+        <div class="tally-strip">
+          <StatCard label="In flight" value={initialLoading && jobs.length === 0 ? '—' : stats.inFlight} />
+          <StatCard label="Ready for review" value={initialLoading && jobs.length === 0 ? '—' : stats.review} attention={stats.review > 0} />
+          <StatCard label="Average render" value={stats.averageRender} />
+          <StatCard label="Validation pass rate" value={stats.passRate} />
+        </div>
+      </section>
+
+      <div class="queue-bar">
+        <h2 class="section-title"><span class="section-no" aria-hidden="true">SEC 01</span>Cue queue</h2>
+        <div class="filter-group" aria-label="Filter cues">
+          {#each filterOrder as filter, index (filter)}
+            <button
+              type="button"
+              bind:this={filterTabs[index]}
+              class="filter-btn"
+              aria-pressed={jobFilter === filter}
+              tabindex={jobFilter === filter ? 0 : -1}
+              on:click={() => selectFilter(filter)}
+              on:keydown={(event) => onFilterKeydown(event, index)}
+            >{filter === 'all' ? `All · ${jobs.length}` : filter === 'review' ? 'Review' : 'Running'}</button>
+          {/each}
+        </div>
       </div>
-      <div class="topbar-actions">
-        <span class:api-live={dataMode === 'live' || dataMode === 'degraded'} class:api-demo={dataMode === 'demo'} class:api-offline={dataMode === 'stale' || dataMode === 'checking'} class="api-status"><span class="api-status-dot"></span>{connectionLabel}</span>
-        <span class="sync-label">{connectionSync}</span>
-        <span class="topbar-divider"></span>
-        <button type="button" class="icon-button subtle" aria-label="Refresh dashboard" disabled={refreshing} on:click={() => void refreshDashboard()}><Icon name="refresh" size={17} /></button>
-        <span class="topbar-avatar">MK</span>
-      </div>
-    </header>
 
-    <div class="content-wrap">
-      <section class="page-heading">
-        <div>
-          <span class="eyebrow accent-eyebrow">SlopShots / control room</span>
-          <h1>Keep the pipeline moving.</h1>
-          <p>Intake, render, inspect, approve. Every state below comes from the runner.</p>
-        </div>
-        <div class="heading-actions">
-          <input bind:this={scriptFileInput} class="sr-only" type="file" accept=".txt,text/plain" on:change={handleScriptFile} />
-          <button type="button" class="button button-secondary" on:click={importScriptFile}><Icon name="upload" size={16} /> Import script</button>
-          <button type="button" class="button button-primary" on:click={openNewJob}><Icon name="plus" size={17} /> New video job</button>
-        </div>
-      </section>
-
-      {#if dataMode === 'demo' || dataMode === 'stale' || dataMode === 'degraded'}
-        <div class:connection-banner-demo={dataMode === 'demo'} class:connection-banner-error={dataMode === 'stale'} class:connection-banner-warning={dataMode === 'degraded'} class="connection-banner" role="status">
-          <span class="connection-banner-icon"><Icon name={dataMode === 'degraded' ? 'alert' : dataMode === 'demo' ? 'activity' : 'x'} size={15} /></span>
-          <span>
-            <strong>{dataMode === 'demo' ? 'Disconnected: sample data only.' : dataMode === 'stale' ? 'Connection lost: showing the last live snapshot.' : 'Backend is connected but degraded.'}</strong>
-            {#if dataMode === 'demo'} {connectionError || 'Mutating actions and artifact links are disabled until the API connects.'}{:else if dataMode === 'degraded'} {healthSummary()}{:else} {connectionError || 'Retry to resume live updates.'}{/if}
-          </span>
-          <button type="button" class="button button-ghost compact" disabled={refreshing} on:click={() => void refreshDashboard()}>{refreshing ? 'Retrying…' : 'Retry connection'}</button>
-        </div>
-      {/if}
-
-      {#if lastError && dataMode !== 'demo'}
-        <div class="inline-error" role="alert"><Icon name="alert" size={14} /><span>{lastError}</span><button type="button" class="icon-button subtle" aria-label="Dismiss error" on:click={() => (lastError = '')}><Icon name="x" size={14} /></button></div>
-      {/if}
-
-      <section class="stats-grid" aria-label="Pipeline summary">
-        <StatCard label="In flight" value={initialLoading && jobs.length === 0 ? '—' : stats.inFlight} change={dataMode === 'demo' ? 'Sample data' : stats.inFlight ? 'Live stage count' : 'No active stages'} icon="activity" changeTone={dataMode === 'demo' ? 'warning' : 'neutral'} />
-        <StatCard label="Ready for review" value={initialLoading && jobs.length === 0 ? '—' : stats.review} change={stats.review ? 'Needs your eye' : 'No pending approvals'} icon="eye" changeTone={stats.review ? 'warning' : 'neutral'} />
-        <StatCard label="Average render" value={stats.averageRender} change={dataMode === 'demo' ? 'Sample data' : 'From completed render stages'} icon="gauge" changeTone="neutral" />
-        <StatCard label="Validation pass rate" value={stats.passRate} change={dataMode === 'demo' ? 'Sample data' : 'From validation stages'} icon="check-circle" changeTone={dataMode === 'demo' ? 'warning' : 'neutral'} />
-      </section>
-
-      <section class="top-panels">
-        <article class="panel jobs-panel" id="jobs-panel">
-          <div class="panel-heading">
-            <div><span class="eyebrow">Production queue</span><h2>Video jobs <span class="heading-count">{jobs.length}</span></h2></div>
-            <StatusPill status={dataMode === 'demo' ? 'offline' : dataMode === 'degraded' ? 'degraded' : dataMode === 'checking' ? 'unknown' : 'complete'} label={dataMode === 'demo' ? 'Sample only' : dataMode === 'checking' ? 'Loading' : dataMode === 'degraded' ? 'Degraded' : dataMode === 'stale' ? 'Snapshot' : 'Live'} />
+      <div class="cue-table" id="queue-list">
+        {#if visibleJobs.length > 0}
+          <div class="cue-head" aria-hidden="true">
+            <span>№</span><span>Cue</span><span>Status</span><span>Stages</span><span class="head-dur">Dur</span><span class="head-updated">Updated</span>
           </div>
-          <div class="job-tabs" role="tablist" aria-label="Job filters">
-            <button type="button" id="job-filter-all" data-filter="all" bind:this={filterTabs[0]} class:tab-selected={jobFilter === 'all'} role="tab" aria-selected={jobFilter === 'all'} aria-controls="job-filter-panel" tabindex={jobFilter === 'all' ? 0 : -1} on:click={() => selectFilter('all')} on:keydown={(event) => onFilterKeydown(event, 0)}>All jobs <span>{jobs.length}</span></button>
-            <button type="button" id="job-filter-review" data-filter="review" bind:this={filterTabs[1]} class:tab-selected={jobFilter === 'review'} role="tab" aria-selected={jobFilter === 'review'} aria-controls="job-filter-panel" tabindex={jobFilter === 'review' ? 0 : -1} on:click={() => selectFilter('review')} on:keydown={(event) => onFilterKeydown(event, 1)}>Needs review <span>{jobs.filter((job) => job.status === 'review').length}</span></button>
-            <button type="button" id="job-filter-running" data-filter="running" bind:this={filterTabs[2]} class:tab-selected={jobFilter === 'running'} role="tab" aria-selected={jobFilter === 'running'} aria-controls="job-filter-panel" tabindex={jobFilter === 'running' ? 0 : -1} on:click={() => selectFilter('running')} on:keydown={(event) => onFilterKeydown(event, 2)}>Running <span>{jobs.filter((job) => job.status === 'rendering').length}</span></button>
-          </div>
-          <div class="job-tabpanel" id="job-filter-panel" role="tabpanel" tabindex="0" aria-labelledby={'job-filter-' + jobFilter}>
-            <div class="job-list">
-            {#if initialLoading && jobs.length === 0}
-              <div class="empty-state"><span class="empty-state-spinner"></span><strong>Connecting to the pipeline…</strong><small>Waiting for /api/v1/jobs.</small></div>
-            {:else if visibleJobs.length === 0}
-              <div class="empty-state"><span class="empty-state-icon"><Icon name="film" size={18} /></span><strong>{jobs.length ? 'No jobs match this filter.' : 'No jobs returned by the API.'}</strong><small>{jobs.length ? 'Choose another queue filter.' : 'Create a job after the backend connection is ready.'}</small></div>
-            {:else}
-              {#each visibleJobs as job (job.id)}
-                <JobRow {job} selected={displayedJob?.id === job.id} onSelect={selectJob} />
-              {/each}
-            {/if}
-            </div>
-          </div>
-          <button type="button" class="panel-footer-link" disabled={jobs.length === 0} on:click={() => navigate('jobs')}><span>View queue</span><Icon name="arrow-right" size={15} /></button>
-        </article>
-
-        <article class="panel intake-panel" id="script-intake">
-          <div class="panel-heading intake-heading">
-            <div><span class="eyebrow">Stage 01 · intake</span><h2>Script editor</h2></div>
-            <span class="editor-mode"><span class:editor-mode-dot={mutationsEnabled} class="editor-mode-dot"></span>{mutationsEnabled ? 'Backend intake ready' : 'Backend required'}</span>
-          </div>
-          <form on:submit|preventDefault={startPipeline}>
-            <label class="field-label" for="script-title">Working title</label>
-            <input id="script-title" class="text-input title-input" bind:value={scriptTitle} placeholder="Give this short a name" />
-            <label class="field-label" for="script-body">Plain-text script <span>· no inline markup</span></label>
-            <div class="script-editor-wrap">
-              <div class="line-numbers" aria-hidden="true">{#each scriptText.split('\n') as _, index (index)}<span>{String(index + 1).padStart(2, '0')}</span>{/each}</div>
-              <textarea id="script-body" bind:value={scriptText} on:input={() => (intakeResult = null)} spellcheck="true" aria-describedby="script-help" placeholder="Paste the narration script here..."></textarea>
-            </div>
-            <div class="editor-meta">
-              <span>{wordCount} words <span class="meta-divider">·</span> ~{estimatedSeconds}s narration</span>
-              <span id="script-help">Backend lint target 130–260 words</span>
-            </div>
-            <div class:lint-good={lintTone === 'good'} class:lint-notice={lintTone === 'notice'} class:lint-warning={lintTone === 'warning'} class="lint-row">
-              <span class="lint-icon"><Icon name={!scriptText.trim() ? 'file' : lintTone === 'good' ? 'check' : 'alert'} size={14} /></span>
-              <span><strong>{lintLabel}</strong> · {lintDetail}</span>
-              <button type="button" class="text-button" disabled={normalizeBusy || !mutationsEnabled} on:click={() => void normalizeScript()}><Icon name="wand" size={14} /> {normalizeBusy ? 'Normalizing…' : 'Normalize via API'}</button>
-            </div>
-            <div class="intake-controls">
-              <label class="select-field"><span class="field-label">Kokoro voice</span><span class="select-wrap"><select bind:value={intakeVoice} disabled={!settings || !mutationsEnabled}><option value="af_heart">af_heart · warm</option><option value="af_bella">af_bella · clear</option><option value="am_adam">am_adam · grounded</option></select><Icon name="chevron-down" size={14} /></span></label>
-              <label class="select-field"><span class="field-label">Speed factor</span><span class="select-wrap"><select bind:value={intakeSpeed} disabled={!settings || !mutationsEnabled}><option value={0.96}>0.96× slower</option><option value={1}>1.00× natural</option><option value={1.02}>1.02× natural</option><option value={1.08}>1.08× faster</option></select><Icon name="chevron-down" size={14} /></span></label>
-            </div>
-            <div class="intake-controls">
-              <label class="select-field"><span class="field-label">Karaoke mode</span><span class="select-wrap"><select bind:value={intakeKaraokeMode} disabled={!settings || !mutationsEnabled}><option value="kf">kf · progressive fill</option><option value="k">k · word highlight</option></select><Icon name="chevron-down" size={14} /></span><small class="field-note">kf fills captions progressively · k highlights word-by-word</small></label>
-              <span class="field-note">Create performs the real <code>POST /api/v1/jobs</code> and intake call.</span>
-            </div>
-            <div class="media-fields">
-              <div class="media-fields-heading"><span><strong>Upload or register media</strong><small>Uploads are stored by the backend; absolute runner paths remain supported.</small></span><Icon name="upload" size={15} /></div>
-              <div class="media-upload-options">
-                <label class="select-field"><span class="field-label">Media source</span><span class="select-wrap"><select bind:value={mediaSource} disabled={!mutationsEnabled || mediaUploadBusy !== null}><option value="original">Original</option><option value="licensed">Licensed</option><option value="community">Community</option></select><Icon name="chevron-down" size={14} /></span></label>
-                <label class="media-confirm"><input type="checkbox" bind:checked={mediaConfirmed} disabled={!mutationsEnabled || mediaUploadBusy !== null} /> <span>I have permission to use these files</span></label>
-              </div>
-              <label class="field-label" for="new-gameplay-path">Gameplay asset ID or runner path <span>· required for timeline/render</span></label>
-              <input id="new-gameplay-path" class="text-input" bind:value={gameplayPath} placeholder="uploads/gameplay/… or /absolute/path/to/gameplay.mp4" />
-              <label class="field-label" for="new-music-path">Music asset ID or runner path <span>· optional</span></label>
-              <input id="new-music-path" class="text-input" bind:value={musicPath} placeholder="uploads/music/… or /absolute/path/to/music.wav" />
-              <div class="media-picker-row">
-                <input bind:this={gameplayFileInput} class="sr-only" type="file" accept="video/*" disabled={!mutationsEnabled || mediaUploadBusy !== null} on:change={(event) => void handleMediaFile(event, 'gameplay')} />
-                <input bind:this={musicFileInput} class="sr-only" type="file" accept="audio/*" disabled={!mutationsEnabled || mediaUploadBusy !== null} on:change={(event) => void handleMediaFile(event, 'music')} />
-                <button type="button" class="text-button" disabled={!mutationsEnabled || mediaUploadBusy !== null} on:click={() => chooseMedia('gameplay')}><Icon name="upload" size={13} /> {mediaUploadBusy === 'gameplay' ? 'Uploading gameplay…' : 'Upload gameplay file'}</button>
-                <button type="button" class="text-button" disabled={!mutationsEnabled || mediaUploadBusy !== null} on:click={() => chooseMedia('music')}><Icon name="upload" size={13} /> {mediaUploadBusy === 'music' ? 'Uploading music…' : 'Upload music file'}</button>
-              </div>
-              {#if gameplaySelection || musicSelection}<small class="field-note">{gameplaySelection || ''}{gameplaySelection && musicSelection ? ' · ' : ''}{musicSelection || ''}</small>{/if}
-            </div>
-            <button type="submit" class="button button-primary full-button" disabled={!mutationsEnabled || actionBusy === 'create' || !settings || mediaUploadBusy !== null}><Icon name="arrow-right" size={16} /> {actionBusy === 'create' ? 'Creating job…' : 'Create job & intake'} <span class="button-note">⌘ ↵</span></button>
-          </form>
-        </article>
-      </section>
-
-      {#if displayedJob}
-        <section class="active-job-heading">
           <div>
-            <span class="eyebrow accent-eyebrow">Selected job · {displayedJob.id}</span>
-            <div class="active-job-title"><h2>{displayedJob.title}</h2><StatusPill status={displayedJob.status} label={displayedJob.statusLabel} /></div>
-            <p>{displayedJob.slug} <span class="meta-divider">·</span> {displayedJob.scriptWords === null ? 'word count unavailable' : `${displayedJob.scriptWords} words`} <span class="meta-divider">·</span> updated {displayedJob.updated}</p>
+            {#each visibleJobs as job, index (job.id)}
+              <JobRow {job} index={index + 1} selected={displayedJob?.id === job.id} onSelect={selectJob} />
+            {/each}
           </div>
-          <div class="approval-actions">
-            <button type="button" class="button button-ghost" disabled={!mutationsEnabled || refreshing} on:click={() => void refreshSelectedJob()}><Icon name="refresh" size={15} /> Refresh status</button>
-            <button type="button" class="button button-secondary" disabled={!mutationsEnabled || actionBusy !== null || displayedJob.backendStatus !== 'awaiting_approval'} on:click={() => requestDecision('revise')}><Icon name="x" size={15} /> Request revision</button>
-            <button type="button" class="button button-secondary" disabled={!mutationsEnabled || actionBusy !== null || displayedJob.backendStatus !== 'awaiting_approval'} on:click={() => requestDecision('reject')}><Icon name="x" size={15} /> Reject</button>
-            <button type="button" class="button button-approve" disabled={!canApprove} on:click={() => requestDecision('approve')}><Icon name="check" size={16} /> {actionBusy === 'approve' ? 'Approving…' : displayedJob.status === 'approved' ? 'Approved' : 'Approve final'}</button>
-          </div>
-          {#if pendingDecision}
-            <div class="decision-confirmation" role="group" aria-labelledby="decision-confirmation-title">
-              <div class="decision-confirmation-copy" aria-live="polite">
-                <strong id="decision-confirmation-title">{pendingDecision === 'approve' ? 'Approve' : pendingDecision === 'reject' ? 'Reject' : 'Request revision'} {displayedJob.title}?</strong>
-                <span>Review note {decisionComment.trim() ? `"${decisionComment.trim()}" will be sent with this action.` : 'is empty — confirm to send without a note.'} Only the confirm button calls the API.</span>
-              </div>
-              <div class="decision-confirmation-actions">
-                <button type="button" class="decision-cancel" on:click={cancelDecision}>Cancel</button>
-                <button type="button" class:decision-danger={pendingDecision !== 'approve'} class:decision-approve={pendingDecision === 'approve'} on:click={confirmDecision}>
-                  {pendingDecision === 'approve' ? 'Confirm approval' : pendingDecision === 'reject' ? 'Confirm rejection' : 'Confirm revision request'}
-                </button>
-              </div>
-            </div>
-          {/if}
-        </section>
-
-        {#if displayedJob.backendStatus === 'awaiting_approval'}
-          <div class="decision-row"><label class="field-label" for="decision-comment">Review note <span>· included with approval/rejection/revision</span></label><textarea id="decision-comment" class="review-comment" bind:value={decisionComment} maxlength="2000" placeholder="Add context for the next operator (optional for approval, useful for revision/rejection)."></textarea></div>
-        {/if}
-
-        <section class="detail-grid">
-          <article class="panel pipeline-panel">
-            <div class="panel-heading"><div><span class="eyebrow">Orchestration</span><h2>Pipeline stages</h2></div><span class="panel-kicker"><Icon name="activity" size={14} /> {displayedJob.progress}% complete</span></div>
-            <Pipeline stages={displayedJob.stages} busyStage={busyStage} disabled={!mutationsEnabled || actionBusy !== null} onRun={handleRunStage} />
-            <div class="stage-options">
-              <label class="media-confirm"><input type="checkbox" bind:checked={useOpenCodeZen} disabled={!mutationsEnabled} /> <span>Generate placements with OpenCode Zen · DeepSeek V4 Flash Free</span></label>
-              <label class="field-label" for="placement-proposals">Placement proposals <span>· manual fallback</span></label>
-              <textarea id="placement-proposals" class="placement-input" bind:value={placementText} disabled={useOpenCodeZen} spellcheck="false" placeholder="[]"></textarea>
-              <small>{useOpenCodeZen ? 'The placement stage calls the configured OpenCode Zen endpoint; the API key stays on the backend.' : 'Use [] when this job has no overlays. The backend validates proposal shape.'}</small>
-            </div>
-            <div class="pipeline-footer"><span><span class:running-dot={displayedJob.backendStatus === 'running'} class="running-dot"></span>{displayedJob.lastError ?? displayedJob.statusLabel}</span><button type="button" class="text-button" disabled={!mutationsEnabled} on:click={() => void refreshSelectedJob()}><Icon name="refresh" size={14} /> Poll now</button></div>
-          </article>
-
-          <article class="panel preview-panel">
-            <div class="panel-heading"><div><span class="eyebrow">Artifact preview</span><h2>{displayedJob.status === 'approved' ? 'Final preview' : 'Rendered preview'}</h2></div><span class="preview-format">{videoArtifact?.meta ?? 'No video artifact'}</span></div>
-            <PreviewCard title={displayedJob.status === 'approved' ? 'Final preview' : 'Rendered preview'} src={videoArtifact?.url || null} mediaType={videoArtifact?.meta ?? 'video/mp4'} accent={displayedJob.accent} posterLabel={dataMode === 'demo' ? 'Sample preview is not connected' : 'Run render to create final.mp4'} />
-            <div class="preview-actions">
-              {#if videoArtifact?.url}
-                <a class="button button-secondary compact" href={videoArtifact.url} target="_blank" rel="noreferrer" download={videoArtifact.name}><Icon name="download" size={14} /> Download {videoArtifact.name}</a>
-              {:else}
-                <button type="button" class="button button-secondary compact" disabled><Icon name="download" size={14} /> Download unavailable</button>
-              {/if}
-            </div>
-          </article>
-
-          <article class="panel artifacts-panel" id="artifacts-panel">
-            <div class="panel-heading"><div><span class="eyebrow">Stage outputs</span><h2>Artifacts <span class="heading-count">{displayedJob.artifacts.length}</span></h2></div><span class="panel-kicker">Links are API-backed</span></div>
-            <div class="artifact-list">
-              {#if displayedJob.artifacts.length === 0}
-                <div class="empty-state compact-empty"><span class="empty-state-icon"><Icon name="layers" size={18} /></span><strong>No artifacts yet.</strong><small>Run a stage to create outputs.</small></div>
-              {:else}
-                {#each displayedJob.artifacts as artifact (artifact.name)}
-                  <div class:artifact-unavailable={!artifact.url} class="artifact-row">
-                    <span class:artifact-video={artifact.type === 'video'} class:artifact-audio={artifact.type === 'audio'} class:artifact-text={artifact.type === 'text'} class:artifact-data={artifact.type === 'data'} class:artifact-command={artifact.type === 'command'} class="artifact-icon"><Icon name={artifact.type === 'video' ? 'film' : artifact.type === 'audio' ? 'mic' : artifact.type === 'data' ? 'database' : artifact.type === 'command' ? 'terminal' : 'file'} size={15} /></span>
-                    {#if artifact.url}
-                      <a class="artifact-name artifact-link" href={artifact.url} target="_blank" rel="noreferrer" download={artifact.name}><strong>{artifact.name}</strong><small>{artifact.meta}</small></a>
-                      <a class="icon-button subtle" href={artifact.url} target="_blank" rel="noreferrer" download={artifact.name} aria-label={`Download ${artifact.name}`}><Icon name="download" size={15} /></a>
-                    {:else}
-                      <span class="artifact-name"><strong>{artifact.name}</strong><small>{artifact.meta} · unavailable in sample mode</small></span>
-                      <span class="artifact-size">—</span>
-                    {/if}
-                    {#if artifact.url}<span class="artifact-size">{artifact.size}</span>{/if}
-                  </div>
-                {/each}
-              {/if}
-            </div>
-          </article>
-
-          <article class="panel validation-panel">
-            <div class="panel-heading"><div><span class="eyebrow">Automated gate</span><h2>Validation checks</h2></div><StatusPill status={validationStatus} label={validationLabel} /></div>
-            <div class="validation-list">
-              {#each displayedJob.validation as check (check.label)}
-                <div class="validation-row"><span class:validation-pass={check.state === 'pass'} class:validation-warn={check.state === 'warn'} class:validation-fail={check.state === 'fail'} class="validation-mark"><Icon name={check.state === 'pass' ? 'check' : check.state === 'warn' ? 'alert' : 'x'} size={13} /></span><span>{check.label}</span><strong>{check.value}</strong></div>
-              {/each}
-            </div>
-            <div class="eyeball-note"><Icon name="eye" size={14} /><span>{selectedValidation?.passed ? 'Backend validation passed; review the actual artifact before approval.' : 'Approval stays disabled until validation.json reports passed.'}</span></div>
-          </article>
-
-          <article class="panel media-panel" id="media-panel">
-            <div class="panel-heading"><div><span class="eyebrow">Runner inputs</span><h2>Register media paths</h2></div><span class="panel-kicker">PATCH /api/v1/jobs/{displayedJob.id}</span></div>
-            <label class="field-label" for="selected-gameplay-path">Gameplay asset ID or path <span>· backend host</span></label>
-            <input id="selected-gameplay-path" class="text-input" bind:value={gameplayPath} placeholder="uploads/gameplay/… or /absolute/path/to/gameplay.mp4" />
-            <label class="field-label" for="selected-music-path">Music asset ID or path <span>· optional</span></label>
-            <input id="selected-music-path" class="text-input" bind:value={musicPath} placeholder="uploads/music/… or /absolute/path/to/music.wav" />
-            <p class="media-disclaimer"><Icon name="database" size={14} /> Uploads use <code>POST /api/v1/media/upload</code>; manual absolute-path registration remains available for files already readable by the runner.</p>
-            <button type="button" class="button button-secondary full-button" disabled={!mutationsEnabled || mediaBusy || !gameplayPath.trim()} on:click={() => void registerMedia()}><Icon name="database" size={14} /> {mediaBusy ? 'Registering…' : 'Register paths on backend'}</button>
-          </article>
-        </section>
-      {:else if !initialLoading}
-        <section class="panel no-selection"><span class="empty-state-icon"><Icon name="film" size={18} /></span><h2>Select a live job to inspect stages and artifacts.</h2><p>Create a job or refresh the queue after connecting to the API.</p></section>
-      {/if}
-
-      <section class="panel settings-panel" id="settings-panel">
-        <div class="panel-heading settings-heading"><div><span class="eyebrow">Runtime configuration</span><h2>Engine settings</h2><p>These controls map directly to <code>PATCH /api/v1/settings</code>.</p></div><button type="button" class="button button-secondary compact" disabled={!mutationsEnabled || !settings || settingsBusy} on:click={() => void saveSettings()}><Icon name="check" size={14} /> {settingsBusy ? 'Saving…' : 'Save settings'}</button></div>
-        {#if settings}
-          <div class="settings-grid">
-            <fieldset class="engine-card" disabled={!mutationsEnabled}>
-              <legend><span class="engine-icon engine-kokoro"><Icon name="mic" size={16} /></span><span><strong>Kokoro</strong><small>Voice synthesis</small></span><StatusPill status={healthFor('kokoro')} label={healthLabel('kokoro')} /></legend>
-              <label class="setting-field"><span>Voice</span><select bind:value={kokoroVoice}><option value="af_heart">af_heart · warm</option><option value="af_bella">af_bella · clear</option><option value="am_adam">am_adam · grounded</option></select></label>
-              <label class="setting-field"><span>Speed factor <output>{Number(kokoroSpeed).toFixed(2)}×</output></span><input type="range" min="0.5" max="1.5" step="0.01" bind:value={kokoroSpeed} /></label>
-              <div class="setting-meta"><span>Current backend default</span><strong>{settings.kokoro_voice}</strong></div>
-            </fieldset>
-            <fieldset class="engine-card" disabled={!mutationsEnabled}>
-              <legend><span class="engine-icon engine-whisper"><Icon name="align" size={16} /></span><span><strong>WhisperX</strong><small>Word alignment</small></span><StatusPill status={healthFor('whisperx')} label={healthLabel('whisperx')} /></legend>
-              <label class="setting-field"><span>Model</span><input class="text-input" bind:value={whisperModel} /></label>
-              <label class="setting-field"><span>Language</span><select bind:value={whisperLanguage}><option value="auto">Auto detect</option><option value="en">English (en)</option><option value="es">Spanish (es)</option></select></label>
-              <div class="settings-split"><div class="setting-meta"><span>Device</span><strong>{whisperDevice}</strong></div><div class="setting-meta"><span>Compute</span><strong>{whisperComputeType}</strong></div></div>
-              <label class="setting-field"><span>Device</span><input class="text-input" bind:value={whisperDevice} /></label>
-              <label class="setting-field"><span>Compute type</span><input class="text-input" bind:value={whisperComputeType} /></label>
-            </fieldset>
-            <fieldset class="engine-card" disabled={!mutationsEnabled}>
-              <legend><span class="engine-icon engine-ffmpeg"><Icon name="film" size={16} /></span><span><strong>FFmpeg</strong><small>Render + validation</small></span><StatusPill status={healthFor('ffmpeg')} label={healthLabel('ffmpeg')} /></legend>
-              <label class="setting-field"><span>FFmpeg executable</span><input class="text-input" bind:value={ffmpegBin} /></label>
-              <label class="setting-field"><span>FFprobe executable</span><input class="text-input" bind:value={ffprobeBin} /></label>
-              <label class="setting-field"><span>Stage timeout (seconds)</span><input class="text-input" type="number" min="1" step="1" bind:value={stageTimeout} /></label>
-              <label class="setting-field"><span>Alignment confidence <output>{Number(alignmentThreshold).toFixed(2)}</output></span><input type="range" min="0" max="1" step="0.01" bind:value={alignmentThreshold} /></label>
-              <label class="setting-field"><span>Karaoke mode</span><select bind:value={karaokeMode}><option value="kf">kf · progressive fill</option><option value="k">k · word highlight</option></select><small>kf fills captions progressively · k highlights word-by-word</small></label>
-            </fieldset>
+        {:else if initialLoading && jobs.length === 0}
+          <div class="empty-rule"><strong>Reading the sheet…</strong>Contacting the pipeline backend.</div>
+        {:else if jobs.length === 0}
+          <div class="empty-rule">
+            <strong>No cues spotted yet</strong>
+            Paste a script under New cue and run the sheet.
+            <br /><br />
+            <button type="button" class="btn btn-compact btn-solid" on:click={openNewJob}><Icon name="plus" size={13} /> New cue</button>
           </div>
         {:else}
-          <div class="settings-empty"><span class="empty-state-icon"><Icon name="settings" size={18} /></span><strong>Settings are unavailable.</strong><small>Connect to the backend to read and save runtime configuration.</small></div>
+          <div class="empty-rule">
+            <strong>Nothing matches this filter</strong>
+            {jobs.length} cues on the sheet; none in “{jobFilter}”.
+            <br /><br />
+            <button type="button" class="text-btn" on:click={() => selectFilter('all')}>Show all cues</button>
+          </div>
         {/if}
-        <form class="api-config" on:submit|preventDefault={connectToApi}>
-          <span class="api-config-icon"><Icon name="activity" size={16} /></span>
-          <span class="api-config-copy"><strong>Python API base URL</strong><small>Blank uses same-origin; this override persists in this browser.</small></span>
-          <input class="text-input api-input" aria-label="Python API base URL" bind:value={apiBaseDraft} placeholder="http://127.0.0.1:8000" />
-          <span class:api-config-connected={dataMode === 'live' || dataMode === 'degraded'} class:api-config-demo={dataMode === 'demo'} class:api-config-offline={dataMode === 'stale' || dataMode === 'checking'} class="api-config-state"><span></span>{dataMode === 'demo' ? 'Disconnected' : dataMode === 'stale' ? 'Retry required' : dataMode === 'checking' ? 'Checking…' : dataMode === 'degraded' ? 'Degraded' : 'Connected'}</span>
-          <button type="submit" class="button button-secondary compact" disabled={refreshing}>{refreshing ? 'Checking…' : 'Connect'}</button>
+      </div>
+
+      {#if displayedJob}
+        <section class="detail-sheet" aria-label="Selected cue">
+          <div class="detail-head">
+            <span class="cue-no" aria-hidden="true">{displayedJob.id.slice(0, 8)}</span>
+            <div class="detail-title-block">
+              <h2>{displayedJob.title}</h2>
+              <p class="detail-meta">
+                {displayedJob.slug}<span class="sep">·</span>{displayedJob.scriptWords === null ? 'word count unavailable' : `${displayedJob.scriptWords} words`}<span class="sep">·</span>updated {displayedJob.updated}
+              </p>
+            </div>
+            <StatusPill status={displayedJob.status} label={displayedJob.statusLabel} />
+            <div class="detail-actions">
+              <button type="button" class="btn btn-compact" disabled={!mutationsEnabled || refreshing} on:click={() => void refreshSelectedJob()}><Icon name="refresh" size={13} /> Refresh status</button>
+            </div>
+          </div>
+
+          <div class="detail-grid">
+            <div class="detail-col">
+              <div class="ledger-title"><span>Pipeline stages</span><span class="ledger-side">{displayedJob.progress}% complete</span></div>
+              <Pipeline stages={displayedJob.stages} {busyStage} disabled={!mutationsEnabled || actionBusy !== null} onRun={(stage) => void handleRunStage(stage)} />
+              <div class="pipeline-foot">
+                <span>{#if displayedJob.backendStatus === 'running'}<span class="running-mark" aria-hidden="true"></span>{/if}{displayedJob.lastError ?? displayedJob.statusLabel}</span>
+                <button type="button" class="text-btn" disabled={!mutationsEnabled} on:click={() => void refreshSelectedJob()}>Poll now</button>
+              </div>
+
+              <div class="ledger-title" style="margin-top: 24px;"><span>Validation gates</span><StatusPill status={validationStatus} label={validationLabel} /></div>
+              {#if displayedJob.validation.length > 0}
+                <div>
+                  {#each displayedJob.validation as check (check.label)}
+                    <div class={`check-row check-${check.state}`}>
+                      <span class="check-mark" aria-hidden="true">{check.state === 'pass' ? '✓' : check.state === 'warn' ? '!' : '✗'}</span>
+                      <span class="check-label">{check.label}</span>
+                      <span class="check-detail">{check.value}</span>
+                    </div>
+                  {/each}
+                </div>
+              {:else}
+                <div class="empty-rule">No validation report yet — run stage 08 on this cue.</div>
+              {/if}
+              {#if selectedValidation && selectedValidation.errors.length > 0}
+                <div class="error-line" role="alert">{selectedValidation.errors.join(' · ')}</div>
+              {/if}
+            </div>
+
+            <div class="detail-col">
+              <PreviewCard
+                title={displayedJob.status === 'approved' ? 'Final preview' : 'Rendered preview'}
+                src={videoArtifact?.url || null}
+                mediaType={videoArtifact?.meta ?? 'video/mp4'}
+                posterLabel={dataMode === 'demo' ? 'Sample preview is not playable' : 'No rendered video yet'}
+              />
+              {#if videoArtifact?.url}
+                <div class="upload-line">
+                  <a class="btn btn-compact" href={videoArtifact.url} target="_blank" rel="noreferrer" download={videoArtifact.name}><Icon name="download" size={13} /> Download {videoArtifact.name}</a>
+                </div>
+              {/if}
+
+              <div class="ledger-title" style="margin-top: 24px;"><span>Artifacts</span><span class="ledger-side">{displayedJob.artifacts.length} files</span></div>
+              {#if displayedJob.artifacts.length > 0}
+                <div>
+                  {#each displayedJob.artifacts as artifact, artifactIndex (artifact.name)}
+                    <div class="artifact-row">
+                      <span class="a-no">{String(artifactIndex + 1).padStart(2, '0')}</span>
+                      <span class="a-name">{artifact.name}</span>
+                      <span class="a-meta">{artifact.size}{artifact.meta ? ` · ${artifact.meta}` : ''}</span>
+                      {#if artifact.url}
+                        <a class="text-btn" href={artifact.url} target="_blank" rel="noreferrer">Open</a>
+                      {:else}
+                        <span class="a-meta">no url</span>
+                      {/if}
+                    </div>
+                  {/each}
+                </div>
+              {:else}
+                <div class="empty-rule">No artifacts yet — stages write files as they run.</div>
+              {/if}
+            </div>
+          </div>
+
+          <div class="detail-foot">
+            <div class="ledger-title"><span>Runner inputs</span><span class="ledger-side">media paths · overlay provider</span></div>
+            <div class="media-grid">
+              <div>
+                <label class="field-label" for="detail-gameplay-path">Gameplay asset ID or runner path <span>· required for timeline/render</span></label>
+                <input id="detail-gameplay-path" class="text-input" bind:value={gameplayPath} placeholder="uploads/gameplay/… or /absolute/path/gameplay.mp4" disabled={!mutationsEnabled} />
+              </div>
+              <div>
+                <label class="field-label" for="detail-music-path">Music asset ID or runner path <span>· optional</span></label>
+                <input id="detail-music-path" class="text-input" bind:value={musicPath} placeholder="uploads/music/… or /absolute/path/music.wav" disabled={!mutationsEnabled} />
+              </div>
+              <div class="field-span">
+                <label class="check-field"><input type="checkbox" bind:checked={useOpenCodeZen} disabled={!mutationsEnabled} /> <span>Generate overlay placements with OpenCode Zen · DeepSeek V4 Flash Free</span></label>
+              </div>
+              {#if !useOpenCodeZen}
+                <div class="field-span">
+                  <label class="field-label" for="placement-proposals">Placement proposals <span>· JSON array, word-anchored</span></label>
+                  <textarea id="placement-proposals" class="placement-input" bind:value={placementText} disabled={!mutationsEnabled} spellcheck="false" placeholder="[]"></textarea>
+                </div>
+              {/if}
+              <div class="field-span">
+                <div class="upload-line">
+                  <button type="button" class="btn btn-compact" disabled={!mutationsEnabled || mediaUploadBusy !== null} on:click={() => chooseMedia('gameplay')}><Icon name="upload" size={13} /> {mediaUploadBusy === 'gameplay' ? 'Uploading…' : 'Upload gameplay'}</button>
+                  <button type="button" class="btn btn-compact" disabled={!mutationsEnabled || mediaUploadBusy !== null} on:click={() => chooseMedia('music')}><Icon name="upload" size={13} /> {mediaUploadBusy === 'music' ? 'Uploading…' : 'Upload music'}</button>
+                  <span class="spacer"></span>
+                  <button type="button" class="btn btn-compact btn-solid" disabled={!mutationsEnabled || mediaBusy || actionBusy !== null} on:click={() => void registerMedia()}>{mediaBusy ? 'Registering…' : 'Register paths'}</button>
+                </div>
+                {#if displayedJob.gameplayFile || displayedJob.musicFile}
+                  <p class="selection-note">Registered on this cue: {displayedJob.gameplayFile || '—'}{displayedJob.musicFile ? ` · ${displayedJob.musicFile}` : ''}</p>
+                {/if}
+                {#if gameplaySelection || musicSelection}
+                  <p class="selection-note">{gameplaySelection}{gameplaySelection && musicSelection ? ' · ' : ''}{musicSelection}</p>
+                {/if}
+              </div>
+            </div>
+          </div>
+
+          <div class="detail-foot">
+            <div class="verdict-block">
+              <div class="verdict-head">
+                <span>Final verdict</span>
+                {#if displayedJob.status === 'approved'}
+                  <span class="stamp stamp-verdict stamp-pass">Approved</span>
+                {:else if displayedJob.status === 'rejected'}
+                  <span class="stamp stamp-verdict stamp-fail">Rejected</span>
+                {:else if displayedJob.approval}
+                  <span class="ledger-side">{displayedJob.approval.decision} · {displayedJob.approval.decided_at}</span>
+                {:else}
+                  <span class="ledger-side">no verdict recorded</span>
+                {/if}
+              </div>
+              <div class="verdict-body">
+                <label class="field-label" for="decision-comment">Review note</label>
+                <textarea id="decision-comment" class="review-comment" bind:value={decisionComment} maxlength="2000" placeholder="Context for the next pass — optional for approval, useful for revision or rejection."></textarea>
+
+                {#if pendingDecision}
+                  <div class="verdict-confirm" role="group" aria-labelledby="verdict-confirm-title">
+                    <strong id="verdict-confirm-title">Confirm {pendingDecision}</strong>
+                    <p>
+                      {#if pendingDecision === 'approve'}Approval is recorded permanently on the backend job.{:else if pendingDecision === 'reject'}Rejection records your note and closes this pass.{:else}A revision request sends your note back for a new pass.{/if}
+                      Only the confirm button calls the API.
+                    </p>
+                    <div class="verdict-actions">
+                      <button type="button" class="btn btn-compact btn-solid" disabled={actionBusy !== null} on:click={() => void confirmDecision()}>Confirm {pendingDecision}</button>
+                      <button type="button" class="btn btn-compact" disabled={actionBusy !== null} on:click={cancelDecision}>Cancel</button>
+                    </div>
+                  </div>
+                {:else}
+                  <div class="verdict-actions">
+                    <button type="button" class="btn btn-amber-outline" disabled={!mutationsEnabled || actionBusy !== null || displayedJob.backendStatus !== 'awaiting_approval'} on:click={() => requestDecision('revise')}>Request revision</button>
+                    <button type="button" class="btn btn-cue-outline" disabled={!mutationsEnabled || actionBusy !== null || displayedJob.backendStatus !== 'awaiting_approval'} on:click={() => requestDecision('reject')}>Reject</button>
+                    <span class="spacer"></span>
+                    <button type="button" class="btn btn-pass" disabled={!canApprove} on:click={() => requestDecision('approve')}><Icon name="check" size={15} /> {actionBusy === 'approve' ? 'Approving…' : displayedJob.status === 'approved' ? 'Approved' : 'Approve final'}</button>
+                  </div>
+                  <div class={`gate-note ${canApprove ? 'gate-pass' : validationStatus === 'failed' ? 'gate-fail' : ''}`}>
+                    <span class="gate-mark" aria-hidden="true"></span>
+                    <span>{canApprove ? 'Validation passed — approval is unlocked.' : 'Approval stays locked until the validation gate passes and the cue awaits review.'}</span>
+                  </div>
+                {/if}
+              </div>
+            </div>
+          </div>
+        </section>
+      {/if}
+    {:else if activeNav === 'scripts'}
+      <section id="script-intake" aria-label="New cue">
+        <div class="queue-bar">
+          <h2 class="section-title"><span class="section-no" aria-hidden="true">SEC 02</span>New cue</h2>
+          <div class="masthead-actions">
+            <span class={mutationsEnabled ? 'stamp stamp-live' : 'stamp stamp-off'}>{mutationsEnabled ? 'Backend intake ready' : 'Backend required'}</span>
+            <button type="button" class="btn btn-compact" disabled={!mutationsEnabled} on:click={importScriptFile}>Import .txt</button>
+          </div>
+        </div>
+
+        <form class="intake-grid" on:submit|preventDefault={() => void startPipeline()}>
+          <div class="intake-col">
+            <div class="intake-stack">
+              <div>
+                <label class="field-label" for="script-title">Cue title</label>
+                <input id="script-title" class="text-input" bind:value={scriptTitle} placeholder="Working title for this cue" disabled={!mutationsEnabled} />
+              </div>
+              <div>
+                <div class="lint-tally">
+                  <span class="lint-count">{wordCount}<small> WORDS · ≈{estimatedSeconds}s</small></span>
+                  {#if intakeResult}
+                    <span class={`stamp ${intakeResult.hard_fail ? 'stamp-off' : 'stamp-live'}`}>{intakeResult.hard_fail ? 'Hard fail' : 'Backend lint'}</span>
+                  {/if}
+                </div>
+                <textarea id="script-text" bind:value={scriptText} rows="10" placeholder="Paste the narration script. 150–230 words reads as 60–90 seconds at genre pace." disabled={!mutationsEnabled}></textarea>
+                <div class={`lint-rule ${lintTone === 'good' ? 'lint-good' : lintTone === 'warning' ? 'lint-warn' : ''}`}>
+                  <strong>{lintLabel}</strong>
+                  {lintDetail}
+                </div>
+                {#if intakeResult && intakeResult.issues.length > 0}
+                  <ul class="lint-issues">
+                    {#each intakeResult.issues as issue (issue.code + issue.message)}
+                      <li><span class="issue-code">{issue.code}</span> {issue.message}</li>
+                    {/each}
+                  </ul>
+                {/if}
+                <div class="upload-line">
+                  <button type="button" class="text-btn" disabled={!mutationsEnabled || normalizeBusy || !scriptText.trim()} on:click={() => void normalizeScript()}>{normalizeBusy ? 'Normalizing…' : 'Normalize via backend'}</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="intake-col">
+            <div class="intake-stack">
+              <div class="spec-grid">
+                <div>
+                  <label class="field-label" for="intake-voice">Voice</label>
+                  <select id="intake-voice" bind:value={intakeVoice} disabled={!mutationsEnabled}>
+                    <option value="af_heart">af_heart · warm</option>
+                    <option value="af_bella">af_bella · clear</option>
+                    <option value="am_adam">am_adam · grounded</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="field-label" for="intake-speed">Speed <output>{Number(intakeSpeed).toFixed(2)}×</output></label>
+                  <input id="intake-speed" type="range" min="0.5" max="1.5" step="0.01" bind:value={intakeSpeed} disabled={!mutationsEnabled} />
+                </div>
+                <div class="field-span">
+                  <label class="field-label" for="intake-karaoke">Karaoke mode</label>
+                  <select id="intake-karaoke" bind:value={intakeKaraokeMode} disabled={!mutationsEnabled}>
+                    <option value="kf">kf · progressive fill</option>
+                    <option value="k">k · word highlight</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="ledger-title"><span>Media</span><span class="ledger-side">stored by the backend</span></div>
+              <div class="media-grid">
+                <div>
+                  <label class="field-label" for="intake-source">Source</label>
+                  <select id="intake-source" bind:value={mediaSource} disabled={!mutationsEnabled || mediaUploadBusy !== null}>
+                    <option value="original">Original</option>
+                    <option value="licensed">Licensed</option>
+                    <option value="community">Community</option>
+                  </select>
+                </div>
+                <label class="check-field" style="align-self: center;"><input type="checkbox" bind:checked={mediaConfirmed} disabled={!mutationsEnabled || mediaUploadBusy !== null} /> <span>I have permission to use these files</span></label>
+                <div class="field-span">
+                  <label class="field-label" for="intake-gameplay-path">Gameplay asset ID or runner path <span>· required for timeline/render</span></label>
+                  <input id="intake-gameplay-path" class="text-input" bind:value={gameplayPath} placeholder="uploads/gameplay/… or /absolute/path/gameplay.mp4" disabled={!mutationsEnabled} />
+                </div>
+                <div class="field-span">
+                  <label class="field-label" for="intake-music-path">Music asset ID or runner path <span>· optional</span></label>
+                  <input id="intake-music-path" class="text-input" bind:value={musicPath} placeholder="uploads/music/… or /absolute/path/music.wav" disabled={!mutationsEnabled} />
+                </div>
+              </div>
+              <div class="upload-line">
+                <input bind:this={scriptFileInput} class="sr-only" type="file" accept=".txt,text/plain" on:change={(event) => void handleScriptFile(event)} />
+                <input bind:this={gameplayFileInput} class="sr-only" type="file" accept="video/*" disabled={!mutationsEnabled || mediaUploadBusy !== null} on:change={(event) => void handleMediaFile(event, 'gameplay')} />
+                <input bind:this={musicFileInput} class="sr-only" type="file" accept="audio/*" disabled={!mutationsEnabled || mediaUploadBusy !== null} on:change={(event) => void handleMediaFile(event, 'music')} />
+                <button type="button" class="btn btn-compact" disabled={!mutationsEnabled || mediaUploadBusy !== null} on:click={() => chooseMedia('gameplay')}><Icon name="upload" size={13} /> {mediaUploadBusy === 'gameplay' ? 'Uploading…' : 'Upload gameplay'}</button>
+                <button type="button" class="btn btn-compact" disabled={!mutationsEnabled || mediaUploadBusy !== null} on:click={() => chooseMedia('music')}><Icon name="upload" size={13} /> {mediaUploadBusy === 'music' ? 'Uploading…' : 'Upload music'}</button>
+              </div>
+              {#if gameplaySelection || musicSelection}
+                <p class="selection-note">{gameplaySelection}{gameplaySelection && musicSelection ? ' · ' : ''}{musicSelection}</p>
+              {/if}
+              <button type="submit" class="btn btn-solid btn-block" disabled={!mutationsEnabled || actionBusy === 'create' || !settings || mediaUploadBusy !== null}>
+                <Icon name="arrow-right" size={15} /> {actionBusy === 'create' ? 'Creating cue…' : 'Create cue & intake'}
+              </button>
+            </div>
+          </div>
         </form>
       </section>
+    {:else}
+      <section id="settings-panel" aria-label="Session setup">
+        <div class="queue-bar">
+          <h2 class="section-title"><span class="section-no" aria-hidden="true">SEC 03</span>Session setup</h2>
+          <button type="button" class="btn btn-solid btn-compact" disabled={!mutationsEnabled || !settings || settingsBusy} on:click={() => void saveSettings()}><Icon name="check" size={13} /> {settingsBusy ? 'Saving…' : 'Save settings'}</button>
+        </div>
 
-      <footer class="app-footer"><span><span class:footer-pulse={dataMode === 'live' || dataMode === 'degraded'} class="footer-pulse"></span> {connectionLabel}</span><span>v0.1 operator <span class="meta-divider">·</span> manual publishing remains outside API v1</span></footer>
-    </div>
+        <div class="setup-section">
+          <div class="setup-grid">
+            <fieldset class="engine-block" disabled={!mutationsEnabled}>
+              <legend><strong>Kokoro</strong><small>Local TTS</small><StatusPill status={healthFor('kokoro')} label={healthLabel('kokoro')} /></legend>
+              <div class="engine-body">
+                <div class="setting-field">
+                  <label class="field-label" for="set-voice">Voice</label>
+                  <select id="set-voice" bind:value={kokoroVoice}>
+                    <option value="af_heart">af_heart · warm</option>
+                    <option value="af_bella">af_bella · clear</option>
+                    <option value="am_adam">am_adam · grounded</option>
+                  </select>
+                </div>
+                <div class="setting-field">
+                  <label class="field-label" for="set-speed">Speed factor</label>
+                  <div class="settings-range-row">
+                    <input id="set-speed" type="range" min="0.5" max="1.5" step="0.01" bind:value={kokoroSpeed} />
+                    <output>{Number(kokoroSpeed).toFixed(2)}×</output>
+                  </div>
+                </div>
+                <div class="setting-meta"><span>Backend default</span><strong>{settings?.kokoro_voice ?? '—'} · {settings ? Number(settings.kokoro_speed).toFixed(2) + '×' : '—'}</strong></div>
+              </div>
+            </fieldset>
+
+            <fieldset class="engine-block" disabled={!mutationsEnabled}>
+              <legend><strong>WhisperX</strong><small>Word alignment</small><StatusPill status={healthFor('whisperx')} label={healthLabel('whisperx')} /></legend>
+              <div class="engine-body">
+                <div class="setting-field">
+                  <label class="field-label" for="set-wx-model">Model</label>
+                  <input id="set-wx-model" class="text-input" bind:value={whisperModel} />
+                </div>
+                <div class="setting-field">
+                  <label class="field-label" for="set-wx-lang">Language</label>
+                  <select id="set-wx-lang" bind:value={whisperLanguage}>
+                    <option value="auto">Auto detect</option>
+                    <option value="en">English (en)</option>
+                  </select>
+                </div>
+                <div class="setting-field">
+                  <label class="field-label" for="set-wx-device">Device</label>
+                  <select id="set-wx-device" bind:value={whisperDevice}>
+                    <option value="cpu">cpu</option>
+                    <option value="cuda">cuda</option>
+                  </select>
+                </div>
+                <div class="setting-field">
+                  <label class="field-label" for="set-wx-compute">Compute type</label>
+                  <select id="set-wx-compute" bind:value={whisperComputeType}>
+                    <option value="int8">int8</option>
+                    <option value="int16">int16</option>
+                    <option value="float16">float16</option>
+                    <option value="float32">float32</option>
+                  </select>
+                </div>
+                <div class="setting-meta"><span>Backend default</span><strong>{settings?.whisperx_model ?? '—'} · {settings?.whisperx_device ?? '—'}</strong></div>
+              </div>
+            </fieldset>
+
+            <fieldset class="engine-block" disabled={!mutationsEnabled}>
+              <legend><strong>FFmpeg</strong><small>Render & gates</small><StatusPill status={healthFor('ffmpeg')} label={healthLabel('ffmpeg')} /></legend>
+              <div class="engine-body">
+                <div class="setting-field">
+                  <label class="field-label" for="set-ffmpeg-bin">ffmpeg binary</label>
+                  <input id="set-ffmpeg-bin" class="text-input" bind:value={ffmpegBin} />
+                </div>
+                <div class="setting-field">
+                  <label class="field-label" for="set-ffprobe-bin">ffprobe binary</label>
+                  <input id="set-ffprobe-bin" class="text-input" bind:value={ffprobeBin} />
+                </div>
+                <div class="setting-field">
+                  <label class="field-label" for="set-align-threshold">Alignment confidence threshold</label>
+                  <div class="settings-range-row">
+                    <input id="set-align-threshold" type="range" min="0" max="1" step="0.05" bind:value={alignmentThreshold} />
+                    <output>{Number(alignmentThreshold).toFixed(2)}</output>
+                  </div>
+                </div>
+                <div class="setting-field">
+                  <label class="field-label" for="set-karaoke">Karaoke mode</label>
+                  <select id="set-karaoke" bind:value={karaokeMode}>
+                    <option value="kf">kf · progressive fill</option>
+                    <option value="k">k · word highlight</option>
+                  </select>
+                </div>
+                <div class="setting-field">
+                  <label class="field-label" for="set-stage-timeout">Stage timeout (seconds)</label>
+                  <input id="set-stage-timeout" class="text-input" type="number" min="60" step="1" bind:value={stageTimeout} />
+                </div>
+              </div>
+            </fieldset>
+          </div>
+
+          <div class="api-block">
+            <div class="engine-head"><strong>Backend connection</strong><small>{getApiBaseUrl() || 'not set — demo data'}</small></div>
+            <div class="api-body">
+              <label class="sr-only" for="api-base">API base URL</label>
+              <input id="api-base" class="text-input" bind:value={apiBaseDraft} placeholder="http://127.0.0.1:8000" />
+              <button type="button" class="btn btn-compact btn-solid" disabled={refreshing} on:click={() => void connectToApi()}>Connect</button>
+              <button type="button" class="btn btn-compact" on:click={() => { apiBaseDraft = ''; }}>Clear</button>
+            </div>
+          </div>
+
+          {#if health}
+            <p class="health-line">{health.service} v{health.version} · {health.job_count ?? 0} jobs on disk · data dir {health.data_directory ?? 'unknown'}{health.data_directory_writable === false ? ' (read-only)' : ''} · {healthSummary()}</p>
+          {/if}
+        </div>
+      </section>
+    {/if}
   </main>
+
+  <footer class="sheet-footer">
+    <span>SlopShots · spotting sheet · v0.1 operator</span>
+    <span>Manual publishing remains outside API v1</span>
+  </footer>
 </div>
 
 {#if toastMessage}
-  <div class:toast-error={toastTone === 'error'} class:toast-warning={toastTone === 'warning'} class="toast" role="status"><span class="toast-check"><Icon name={toastTone === 'success' ? 'check' : toastTone === 'warning' ? 'alert' : 'x'} size={14} /></span>{toastMessage}<button type="button" class="toast-close" aria-label="Dismiss notification" on:click={() => (toastMessage = '')}><Icon name="x" size={14} /></button></div>
+  <div class={`toast ${toastTone === 'error' ? 'toast-error' : toastTone === 'warning' ? 'toast-warning' : ''}`} role="status">
+    <span class="toast-mark" aria-hidden="true"></span>
+    <span class="toast-copy">{toastMessage}</span>
+    <button type="button" class="text-btn" on:click={() => (toastMessage = '')} aria-label="Dismiss notice">✕</button>
+  </div>
 {/if}

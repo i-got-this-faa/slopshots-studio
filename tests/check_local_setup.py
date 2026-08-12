@@ -30,14 +30,16 @@ def _run(command: list[str]) -> tuple[bool, str]:
     return result.returncode == 0, output
 
 
-def _check_executable(name: str, command: str, failures: list[str]) -> bool:
+def _check_executable(
+    name: str, command: str, failures: list[str], version_flag: str = "-version"
+) -> bool:
     resolved = shutil.which(command)
     if resolved is None:
         failures.append(f"{name}: executable not found ({command})")
         return False
-    ok, detail = _run([resolved, "-version"])
+    ok, detail = _run([resolved, version_flag])
     if not ok:
-        failures.append(f"{name}: {resolved} did not pass -version ({detail})")
+        failures.append(f"{name}: {resolved} did not pass {version_flag} ({detail})")
         return False
     print(f"PASS: {name} -> {resolved}")
     return True
@@ -86,7 +88,7 @@ def main() -> int:
     _check_executable("ffmpeg", ffmpeg, failures)
     _check_ffmpeg_filters(ffmpeg, failures)
     _check_executable("ffprobe", ffprobe, failures)
-    _check_executable("espeak-ng", espeak, failures)
+    _check_executable("espeak-ng", espeak, failures, version_flag="--version")
     if not args.binaries_only:
         _check_python_modules(failures)
 

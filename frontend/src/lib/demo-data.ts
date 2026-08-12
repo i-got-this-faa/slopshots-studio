@@ -111,7 +111,7 @@ export const demoSettings: RuntimeSettings = {
 };
 
 export const demoDashboard: DashboardData = {
-  stats: { inFlight: 2, review: 1, averageRender: 'sample', passRate: 'sample' },
+  stats: { inFlight: 2, review: 1, averageRender: '—', passRate: '—' },
   jobs: demoJobs,
   settings: demoSettings,
   health: null

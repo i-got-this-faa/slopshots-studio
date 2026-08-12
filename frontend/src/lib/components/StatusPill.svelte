@@ -21,9 +21,26 @@
   };
 
   $: displayLabel = label ?? defaultLabels[status] ?? status;
+  $: toneClass =
+    status === 'rendering' || status === 'active'
+      ? 'status-running'
+      : status === 'review'
+        ? 'status-review'
+        : status === 'queued'
+          ? 'status-queued'
+          : status === 'approved' || status === 'completed'
+            ? 'status-approved'
+            : status === 'rejected' || status === 'failed' || status === 'offline'
+              ? 'status-rejected'
+              : status === 'complete' || status === 'pass'
+                ? 'status-pass'
+                : status === 'warn' || status === 'degraded'
+                  ? 'status-warn'
+                  : 'status-pending';
+  $: running = status === 'rendering' || status === 'active';
 </script>
 
-<span class:status-review={status === 'review'} class:status-rendering={status === 'rendering'} class:status-queued={status === 'queued'} class:status-approved={status === 'approved' || status === 'completed'} class:status-failed={status === 'failed' || status === 'rejected' || status === 'offline'} class:status-active={status === 'active'} class:status-complete={status === 'complete'} class:status-pending={status === 'pending' || status === 'unknown'} class:status-pass={status === 'pass'} class:status-warn={status === 'warn' || status === 'degraded'} class="status-pill">
-  <span class="status-dot" aria-hidden="true"></span>
+<span class={`status-chip ${toneClass}`} class:status-blink={running}>
   {displayLabel}
 </span>
+
